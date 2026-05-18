@@ -18,13 +18,13 @@ if command -v job_notify_slurm >/dev/null 2>&1; then
 fi
 
 proj_dir="${PROCAP_PROJ_DIR:-/grid/koo/home/shared/capybara/procap}"
-params="${1:-}"
-timestamp="${2:-}"
+timestamp="${1:-}"
+params="${2:-}"
 cell_type="${3:-K562}"
 data_type="${4:-procap}"
 fold="${5:-1}"
 gpu="${6:-0}"
-stage="${7:-both}"
+stage="${7:-train}"
 
 REPO_ROOT="/grid/koo/home/nagai/projects/capybara"
 script="${REPO_ROOT}/examples/procap/train_procapnet.py"

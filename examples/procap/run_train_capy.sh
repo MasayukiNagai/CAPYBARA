@@ -26,7 +26,7 @@ cell_type="${3:-K562}"
 data_type="${4:-procap}"
 fold="${5:-1}"
 gpu="${6:-0}"
-stage="${7:-both}"  # train, finetune, both
+stage="${7:-train}"  # train, finetune, both
 
 REPO_ROOT="/grid/koo/home/nagai/projects/capybara"
 script="${REPO_ROOT}/examples/procap/train_capy.py"
