@@ -30,7 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "kernel_size": 75,
         },
         "count_head": {
-            "type": "ynet",
+            "type": None,
             "source": None,
             "conv_hidden_dims": [128, 64],
             "mlp_hidden_dims": [64],
@@ -214,16 +214,22 @@ def normalize_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     profile_head_cfg["kernel_size"] = int(profile_head_cfg["kernel_size"])
 
     count_head_cfg = model_cfg["count_head"]
-    count_head_cfg["type"] = str(count_head_cfg.get("type", "ynet")).lower()
-    if count_head_cfg["type"] not in VALID_COUNT_HEAD_TYPES:
-        raise ValueError(f"Unsupported model.count_head.type: {count_head_cfg['type']}")
     source_value = count_head_cfg.get("source")
     if source_value is None:
-        count_head_cfg["source"] = "bottleneck" if count_head_cfg["type"] == "ynet" else "decoder"
+        count_head_cfg["source"] = "bottleneck"
     else:
         count_head_cfg["source"] = str(source_value).lower()
     if count_head_cfg["source"] not in VALID_HEAD_SOURCES:
         raise ValueError(f"Unsupported model.count_head.source: {count_head_cfg['source']}")
+
+    inferred_count_type = "unet" if count_head_cfg["source"] == "decoder" else "ynet"
+    explicit_count_type = count_head_cfg.get("type")
+    if explicit_count_type is None:
+        count_head_cfg["type"] = inferred_count_type
+    else:
+        count_head_cfg["type"] = str(explicit_count_type).lower()
+    if count_head_cfg["type"] not in VALID_COUNT_HEAD_TYPES:
+        raise ValueError(f"Unsupported model.count_head.type: {count_head_cfg['type']}")
 
     valid_count_sources = {"encoder", "bottleneck"} if count_head_cfg["type"] == "ynet" else {"decoder"}
     if count_head_cfg["source"] not in valid_count_sources:

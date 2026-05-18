@@ -15,7 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from capybara import CAPY, load_config
+from capybara import CAPY, load_config, print_model_summary
 from data import ProCapDataModule
 from file_config import FoldFilesConfig
 from train_utils import (
@@ -27,7 +27,6 @@ from train_utils import (
     require_training_dependencies,
     select_device,
     train_model,
-    trainable_parameter_count,
     validate_training_stage,
     write_yaml,
 )
@@ -128,9 +127,11 @@ def run_train_stage(
         "params": params,
         "file_config": config_dict,
     }
+    model = CAPY(model_cfg)
     print(f"Training CAPY on {device}; outputs: {files.model_dir}", flush=True)
+    print_model_summary(model)
     train_model(
-        model=CAPY(model_cfg),
+        model=model,
         datamodule=datamodule,
         output_paths=config_dict,
         params=params,
@@ -176,7 +177,6 @@ def run_finetune_stage(
     fine_tune_cfg = tuned_params["fine_tune"]
     model = load_source_model(source_files, device)
     trainable_names = configure_count_finetune_parameters(model, "capy", fine_tune_cfg["mode"])
-    trainable_count = trainable_parameter_count(model)
     metadata = {
         "model_name": "capy",
         "params": tuned_params,
@@ -192,7 +192,7 @@ def run_finetune_stage(
     print(f"Source checkpoint: {source_files.best_checkpoint_path}", flush=True)
     print(f"Fine-tuning mode: {fine_tune_cfg['mode']}", flush=True)
     print(f"Tuned outputs: {target_files.model_dir}", flush=True)
-    print(f"Trainable parameters: {trainable_count}", flush=True)
+    print_model_summary(model)
     best_metrics = finetune_count_head(
         model=model,
         datamodule=datamodule,
