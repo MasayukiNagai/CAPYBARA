@@ -31,7 +31,7 @@ script="${REPO_ROOT}/examples/procap/train_procapnet.py"
 PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 if [[ -z "$params" ]]; then
-  params="${REPO_ROOT}/configs/default_procapnet.yaml"
+  params="${REPO_ROOT}/configs/procapnet_default.yaml"
 fi
 
 cmd=("$PYTHON"

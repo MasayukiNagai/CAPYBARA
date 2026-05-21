@@ -36,7 +36,7 @@ from train_utils import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train ProCapNet on processed PRO-cap data.")
     parser.add_argument("--proj_dir", type=Path, required=True)
-    parser.add_argument("--params", type=Path, default=REPO_ROOT / "configs" / "default_procapnet.yaml")
+    parser.add_argument("--params", type=Path, default=REPO_ROOT / "configs" / "procapnet_default.yaml")
     parser.add_argument("--cell_type", type=str, default="K562")
     parser.add_argument("--data_type", type=str, default="procap")
     parser.add_argument("--fold", type=int, default=1)

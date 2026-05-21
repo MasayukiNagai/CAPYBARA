@@ -108,8 +108,8 @@ Both scripts accept the same core arguments:
 - `--stage`: `train`, `finetune`, or `both`.
 - `--device`: `gpu`, `cpu`, `auto`, or a specific PyTorch device string.
 
-CAPY defaults to `configs/default_procap.yaml`; ProCapNet defaults to
-`configs/default_procapnet.yaml`.
+CAPY defaults to `configs/procap_default.yaml`; ProCapNet defaults to
+`configs/procapnet_default.yaml`.
 
 The `--stage` argument controls how training is staged:
 

@@ -21,7 +21,7 @@ REPO_ROOT="/grid/koo/home/nagai/projects/capybara"
 
 timestamp="${1:-}"
 proj_dir="${PROCAP_PROJ_DIR:-/grid/koo/home/shared/capybara/procap}"
-params="${2:-${REPO_ROOT}/configs/default_procap.yaml}"
+params="${2:-${REPO_ROOT}/configs/procap_default.yaml}"
 cell_type="${3:-K562}"
 data_type="${4:-procap}"
 fold="${5:-1}"

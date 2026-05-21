@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="/grid/koo/home/nagai/projects/capybara"
 
 timestamp="${1:-$(date +%y%m%d_%H%M%S)}"
-params="${2:-$REPO_ROOT/configs/default_procap.yaml}"
+params="${2:-$REPO_ROOT/configs/procap_default.yaml}"
 cell_type="${3:-K562}"
 data_type="${4:-procap}"
 gpu="${5:-}"
