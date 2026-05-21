@@ -156,6 +156,23 @@ class CAPY(nn.Module):
             "decoder_embeds": decoder_embeds,
         }
 
+    def encode_count_source(self, x: Tensor) -> Tensor:
+        x = self._prepare_input(x)
+        encoder_raw, intermediates = self.encoder(x)
+        if self.count_head_source == "encoder":
+            return self.encoder_projector(encoder_raw)
+
+        bottleneck_raw = self.bottleneck(encoder_raw)
+        if self.count_head_source == "bottleneck":
+            return self.bottleneck_projector(bottleneck_raw)
+
+        decoder_raw = self.decoder(bottleneck_raw, intermediates)
+        decoder_embeds = self.output_embedder(decoder_raw)
+        return center_crop_1d(decoder_embeds, self.profile_embedding_length)
+
+    def forward_count(self, x: Tensor) -> Tensor:
+        return self.count_head(self.encode_count_source(x))
+
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         embeddings = self.encode_all(x)
         profile_embeds = embeddings[f"{self.profile_head_source}_embeds"]
