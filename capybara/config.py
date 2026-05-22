@@ -238,16 +238,15 @@ def normalize_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
             f"{sorted(valid_count_sources)}, got '{count_head_cfg['source']}'."
         )
 
-    allow_empty_for_unet = count_head_cfg["type"] == "unet"
     count_head_cfg["conv_hidden_dims"] = _ensure_list(
         count_head_cfg["conv_hidden_dims"],
         name="count_head.conv_hidden_dims",
-        allow_empty=allow_empty_for_unet,
+        allow_empty=True,
     )
     count_head_cfg["mlp_hidden_dims"] = _ensure_list(
         count_head_cfg["mlp_hidden_dims"],
         name="count_head.mlp_hidden_dims",
-        allow_empty=allow_empty_for_unet,
+        allow_empty=True,
     )
     count_head_cfg["kernel_size"] = int(count_head_cfg["kernel_size"])
     count_head_cfg["pool_size"] = int(count_head_cfg["pool_size"])
