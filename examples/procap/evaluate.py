@@ -22,7 +22,7 @@ from capybara import CAPY
 from data import ProfileDataset, extract_loci, load_chrom_names
 from file_config import FoldFilesConfig
 from performance_metrics import compute_performance_metrics
-from procapnet import ProCapNet
+from procapnet import build_procapnet_model
 from train_utils import read_yaml, require_training_dependencies, select_device
 
 
@@ -98,7 +98,7 @@ def model_params_for_name(params: dict[str, Any], model_name: str) -> dict[str, 
 
 def load_model(model_name: str, params: dict[str, Any], checkpoint_path: Path, device: torch.device) -> torch.nn.Module:
     if model_name == "procapnet":
-        model = ProCapNet(**model_params_for_name(params, model_name))
+        model = build_procapnet_model(model_params_for_name(params, model_name))
     elif model_name == "capy":
         model = CAPY(model_params_for_name(params, model_name))
     else:

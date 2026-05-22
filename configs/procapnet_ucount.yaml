@@ -3,10 +3,18 @@ monitor: valid_loss
 mode: min
 
 model:
+  model_type: ucount
   n_filters: 512
   n_layers: 8
   n_outputs: 2
   trimming: 557
+  count_head:
+    conv_hidden_dims: []
+    mlp_hidden_dims: [64]
+    global_pool: avg
+    dropout: 0.1
+    activation: gelu
+    mlp_norm_type: layer
 
 dataset:
   input_length: 2114
@@ -29,7 +37,7 @@ train:
   precision: 32
 
 early_stopping:
-  patience: 20
+  patience: 10
 
 checkpoint:
   save_top_k: 1

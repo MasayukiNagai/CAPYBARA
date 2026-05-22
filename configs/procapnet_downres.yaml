@@ -3,10 +3,15 @@ monitor: valid_loss
 mode: min
 
 model:
+  model_type: downres
   n_filters: 512
-  n_layers: 8
   n_outputs: 2
   trimming: 557
+  trunk_channels: [512, 512, 512, 512, 512, 512, 512, 512]
+  norm_type: batch
+  num_groups: 8
+  activation: gelu
+  dropout: 0.1
 
 dataset:
   input_length: 2114
@@ -29,7 +34,7 @@ train:
   precision: 32
 
 early_stopping:
-  patience: 20
+  patience: 10
 
 checkpoint:
   save_top_k: 1

@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from data import ProCapDataModule
 from file_config import FoldFilesConfig
-from procapnet import ProCapNet
+from procapnet import build_procapnet_model
 from train_utils import (
     configure_count_finetune_parameters,
     fine_tune_timestamp,
@@ -93,7 +93,7 @@ def build_datamodule(
 
 
 def load_source_model(params: dict[str, Any], files: FoldFilesConfig, device: torch.device) -> nn.Module:
-    model = ProCapNet(**params["model"])
+    model = build_procapnet_model(params["model"])
     checkpoint = torch.load(files.best_checkpoint_path, map_location=device)
     if "model_state_dict" not in checkpoint:
         raise KeyError(f"Checkpoint does not contain model_state_dict: {files.best_checkpoint_path}")
@@ -129,7 +129,7 @@ def run_train_stage(
     }
     print(f"Training ProCapNet on {device}; outputs: {files.model_dir}", flush=True)
     train_model(
-        model=ProCapNet(**params["model"]),
+        model=build_procapnet_model(params["model"]),
         datamodule=datamodule,
         output_paths=config_dict,
         params=params,
@@ -177,7 +177,7 @@ def run_finetune_stage(
     trainable_names = configure_count_finetune_parameters(model, "procapnet", fine_tune_cfg["mode"])
     trainable_count = trainable_parameter_count(model)
     alias_message = ""
-    if fine_tune_cfg["mode"] == "count_head":
+    if fine_tune_cfg["mode"] == "count_head" and not hasattr(model, "count_head"):
         alias_message = " (alias for model.linear in ProCapNet)"
     metadata = {
         "model_name": "procapnet",

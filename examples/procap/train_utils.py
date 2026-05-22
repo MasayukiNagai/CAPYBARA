@@ -392,24 +392,25 @@ def save_training_checkpoint(
 
 
 def final_count_layer(model: nn.Module, model_name: str) -> nn.Module:
+    if hasattr(model, "count_head") and hasattr(model.count_head, "mlp"):
+        last_layer = model.count_head.mlp[-1]
+        if not isinstance(last_layer, nn.Linear) or last_layer.out_features != 1:
+            raise TypeError("Expected count_head.mlp[-1] to be nn.Linear(..., 1).")
+        return last_layer
+
     if model_name == "procapnet":
         if not hasattr(model, "linear"):
             raise AttributeError("ProCapNet model does not expose linear count layer.")
         return model.linear
 
-    if not hasattr(model, "count_head") or not hasattr(model.count_head, "mlp"):
-        raise AttributeError("CAPY model does not expose count_head.mlp.")
-    last_layer = model.count_head.mlp[-1]
-    if not isinstance(last_layer, nn.Linear) or last_layer.out_features != 1:
-        raise TypeError("Expected CAPY count_head.mlp[-1] to be nn.Linear(..., 1).")
-    return last_layer
+    raise AttributeError(f"{model_name} model does not expose a recognized count layer.")
 
 
 def configure_count_finetune_parameters(model: nn.Module, model_name: str, mode: str) -> list[str]:
     for parameter in model.parameters():
         parameter.requires_grad = False
 
-    if model_name == "capy" and mode == "count_head":
+    if hasattr(model, "count_head") and mode == "count_head":
         modules = [model.count_head]
     elif mode in {"count_head", "final_layer"}:
         modules = [final_count_layer(model, model_name)]
@@ -432,7 +433,7 @@ def trainable_parameter_count(model: nn.Module) -> int:
 
 def set_count_finetune_train_mode(model: nn.Module, model_name: str, mode: str) -> None:
     model.eval()
-    if model_name == "capy" and mode == "count_head":
+    if hasattr(model, "count_head") and mode == "count_head":
         model.count_head.train()
     else:
         final_count_layer(model, model_name).train()
