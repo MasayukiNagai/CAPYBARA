@@ -26,10 +26,10 @@ The PRO-cap workflow has four main steps:
 
 ## Results
 
-The benchmark tables below summarize K562 PRO-cap results from
-`examples/procap/results/benchmark_250513`. Values are fold mean +/- sample std
-across 7 folds. For JSD, lower is better; for Pearson, Spearman, and R2, higher
-is better.
+For a more detailed, paper-style discussion of the PRO-cap benchmark tables and
+figures, see `RESULTS.md`.
+
+The benchmark tables below summarize K562 PRO-cap results. Values are fold mean +/- sample std across 7 folds. For JSD, lower is better; for Pearson, Spearman, and R2, higher is better.
 
 ### Profile Metrics
 
