@@ -7,8 +7,8 @@ benchmark used by the scripts in this directory. Across seven test folds, the
 default CAPY model improved profile prediction and combined
 positive/negative count prediction relative to the local ProCapNet baseline.
 Within CAPY, Y-net and U-net count heads had similar profile performance. Count
-metrics depended more on the count head design, with the MLP heads generally
-outperforming the linear heads in these ablations.
+metrics depended more on the count head design and count-branch source, with
+the MLP heads generally outperforming the linear heads in these ablations.
 
 All values below are fold mean +/- sample standard deviation across seven test
 folds. JSD is lower-is-better; Pearson, Spearman, and R2 are higher-is-better.
@@ -33,8 +33,9 @@ observed log total counts for three peak sets:
 | --- | --- |
 | ProCapNet | BPNet-style baseline with dilated convolution trunk and profile/count heads. |
 | CAPY/Y-net | Default CAPY model: decoder profile head, count head on the bottleneck. |
-| CAPY/Y-net MLP | CAPY model with an encoder-sourced Y-net count branch and an MLP count head. |
+| CAPY/Y-net MLP | Default CAPY ablation model with a bottleneck-sourced Y-net count branch and an MLP count head. |
 | CAPY/Y-net Linear | CAPY model with a Y-net count branch and a linear count head. |
+| CAPY/Y-net Encoder MLP | CAPY model with an encoder-sourced Y-net count branch and an MLP count head. |
 | CAPY/U-net MLP | CAPY model with a decoder-sourced U-net count head and an MLP count head. |
 | CAPY/U-net Linear | CAPY model with a decoder-sourced U-net count head and a linear count head. |
 
@@ -75,34 +76,34 @@ positive/negative peaks, while positive-peak count R2 was lower than ProCapNet.
 
 ## CAPY Count Head Ablation
 
-The four CAPY variants had very similar profile metrics. For count prediction,
+The five CAPY variants had very similar profile metrics. For count prediction,
 the MLP heads were stronger than the linear heads in both the Y-net and U-net
-settings. The U-net MLP head had the strongest combined positive/negative count
-Pearson, while the Y-net MLP head had the strongest combined
-positive/negative count Spearman and R2 in this comparison.
+settings. The default bottleneck-sourced Y-net MLP head was strongest overall,
+while the encoder-sourced Y-net MLP head was close behind on negative and
+combined positive/negative count metrics.
 
 ### Profile Metrics
 
-| Metric | CAPY/Y-net MLP | CAPY/Y-net Linear | CAPY/U-net MLP | CAPY/U-net Linear |
-| --- | ---: | ---: | ---: | ---: |
-| JSD | 0.653 +/- 0.003 | **0.653 +/- 0.008** | 0.654 +/- 0.005 | 0.655 +/- 0.006 |
-| Pearson | 0.594 +/- 0.005 | **0.595 +/- 0.011** | 0.592 +/- 0.007 | 0.592 +/- 0.009 |
-| Spearman | **0.304 +/- 0.004** | 0.303 +/- 0.005 | 0.303 +/- 0.004 | 0.303 +/- 0.005 |
+| Metric | CAPY/Y-net MLP | CAPY/Y-net Linear | CAPY/Y-net Encoder MLP | CAPY/U-net MLP | CAPY/U-net Linear |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JSD | 0.653 +/- 0.004 | **0.653 +/- 0.008** | 0.653 +/- 0.003 | 0.654 +/- 0.005 | 0.655 +/- 0.006 |
+| Pearson | 0.595 +/- 0.006 | **0.595 +/- 0.011** | 0.594 +/- 0.005 | 0.592 +/- 0.007 | 0.592 +/- 0.009 |
+| Spearman | 0.304 +/- 0.004 | 0.303 +/- 0.005 | **0.304 +/- 0.004** | 0.303 +/- 0.004 | 0.303 +/- 0.005 |
 
 
 ### Count Metrics
 
-| Split | Metric | CAPY/Y-net MLP | CAPY/Y-net Linear | CAPY/U-net MLP | CAPY/U-net Linear |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Positive peaks | Pearson | **0.736 +/- 0.019** | 0.712 +/- 0.021 | 0.736 +/- 0.022 | 0.732 +/- 0.024 |
-| Positive peaks | Spearman | 0.762 +/- 0.017 | 0.737 +/- 0.018 | **0.763 +/- 0.017** | 0.761 +/- 0.018 |
-| Positive peaks | R2 | 0.325 +/- 0.059 | 0.296 +/- 0.049 | **0.327 +/- 0.087** | 0.317 +/- 0.085 |
-| Negative peaks | Pearson | **0.497 +/- 0.017** | 0.489 +/- 0.018 | 0.493 +/- 0.016 | 0.497 +/- 0.020 |
-| Negative peaks | Spearman | **0.493 +/- 0.016** | 0.475 +/- 0.018 | 0.486 +/- 0.017 | 0.488 +/- 0.020 |
-| Negative peaks | R2 | **-0.878 +/- 0.177** | -1.046 +/- 0.186 | -0.893 +/- 0.185 | -0.900 +/- 0.158 |
-| Positive + negative peaks | Pearson | 0.754 +/- 0.011 | 0.742 +/- 0.014 | **0.760 +/- 0.008** | 0.758 +/- 0.018 |
-| Positive + negative peaks | Spearman | **0.726 +/- 0.016** | 0.713 +/- 0.017 | 0.723 +/- 0.016 | 0.723 +/- 0.018 |
-| Positive + negative peaks | R2 | **0.443 +/- 0.049** | 0.396 +/- 0.049 | 0.439 +/- 0.047 | 0.437 +/- 0.037 |
+| Split | Metric | CAPY/Y-net MLP | CAPY/Y-net Linear | CAPY/Y-net Encoder MLP | CAPY/U-net MLP | CAPY/U-net Linear |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Positive peaks | Pearson | **0.743 +/- 0.022** | 0.712 +/- 0.021 | 0.736 +/- 0.019 | 0.736 +/- 0.022 | 0.732 +/- 0.024 |
+| Positive peaks | Spearman | **0.769 +/- 0.018** | 0.737 +/- 0.018 | 0.762 +/- 0.017 | 0.763 +/- 0.017 | 0.761 +/- 0.018 |
+| Positive peaks | R2 | **0.353 +/- 0.069** | 0.296 +/- 0.049 | 0.325 +/- 0.059 | 0.327 +/- 0.087 | 0.317 +/- 0.085 |
+| Negative peaks | Pearson | **0.499 +/- 0.018** | 0.489 +/- 0.018 | 0.497 +/- 0.017 | 0.493 +/- 0.016 | 0.497 +/- 0.020 |
+| Negative peaks | Spearman | 0.492 +/- 0.017 | 0.475 +/- 0.018 | **0.493 +/- 0.016** | 0.486 +/- 0.017 | 0.488 +/- 0.020 |
+| Negative peaks | R2 | **-0.856 +/- 0.162** | -1.046 +/- 0.186 | -0.878 +/- 0.177 | -0.893 +/- 0.185 | -0.900 +/- 0.158 |
+| Positive + negative peaks | Pearson | 0.760 +/- 0.007 | 0.742 +/- 0.014 | 0.754 +/- 0.011 | **0.760 +/- 0.008** | 0.758 +/- 0.018 |
+| Positive + negative peaks | Spearman | **0.728 +/- 0.017** | 0.713 +/- 0.017 | 0.726 +/- 0.016 | 0.723 +/- 0.016 | 0.723 +/- 0.018 |
+| Positive + negative peaks | R2 | **0.451 +/- 0.043** | 0.396 +/- 0.049 | 0.443 +/- 0.049 | 0.439 +/- 0.047 | 0.437 +/- 0.037 |
 
 
 ## Interpretation
@@ -117,13 +118,13 @@ negative regions being included during training. This pattern is consistent with
 a positive-peak-biased count model that assigns elevated activity to regions
 without measured PRO-cap peaks.
 
-The architecture ablation suggests that count-head design matters more for
-count prediction than for profile prediction in this setting. The MLP heads
-were stronger than the linear heads overall, while the Y-net and U-net variants
-remained close on profile metrics. These differences should be interpreted as
-benchmark observations from the available K562 PRO-cap runs, not as evidence
-that the same ordering will hold for every assay, cell type, or training
-recipe.
+The architecture ablation suggests that count-head design and count-branch
+source matter more for count prediction than for profile prediction in this
+setting. The MLP heads were stronger than the linear heads overall, while the
+Y-net and U-net variants remained close on profile metrics. These differences
+should be interpreted as benchmark observations from the available K562
+PRO-cap runs, not as evidence that the same ordering will hold for every assay,
+cell type, or training recipe.
 
 Future comparisons should include other assays, including ATAC-seq and PRO-seq,
 and additional cell types, at least for PRO-cap.
