@@ -2,11 +2,12 @@
 
 CAPY-BARA stands for "Count And Profile Y-net"
 for "Base-resolution Attribution, Regulatory design, and Allelic effect prediction".
-
-CAPY-BARA is joint work by Masayuki Nagai and Yijie Kang.
+This is a joint work by Masayuki Nagai and Yijie Kang.
 
 CAPY predicts both base-resolution signal profiles and total signal counts from one-hot encoded DNA sequence. Its key design is a Y-net structure: profile prediction follows the encoder-decoder path, while count prediction can branch from the bottleneck representation.
 The convolutional modules and blocks follow an AlphaGenome modeling design.
+
+For benchmarking results on PRO-cap againt ProCapNet, see [`examples/procap/RESULTS.md`](https://github.com/MasayukiNagai/CAPYBARA/blob/main/examples/procap/RESULTS.md).
 
 ## Requirements
 * PyTorch
