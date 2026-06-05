@@ -1,165 +1,63 @@
 from __future__ import annotations
 
-import gzip
+import sys
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import torch
 from torch import Tensor
-from torch.utils.data import ConcatDataset, DataLoader, Dataset, Sampler
+from torch.utils.data import ConcatDataset, DataLoader, Sampler
+
+_EXAMPLES = Path(__file__).resolve().parents[1]
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+
+from shared.data import ProfileDataset, load_chrom_names
+
+__all__ = [
+    "ProfileDataset",
+    "extract_loci",
+    "load_chrom_names",
+    "MultiSourceBatchSampler",
+    "ProCapDataModule",
+]
 
 
-def one_hot_encode(sequence: str, dtype: np.dtype = np.float32) -> np.ndarray:
-    sequence = sequence.upper()
-    encoded = np.zeros((len(sequence), 4), dtype=dtype)
-    lookup = {"A": 0, "C": 1, "G": 2, "T": 3}
-    for i, base in enumerate(sequence):
-        j = lookup.get(base)
-        if j is not None:
-            encoded[i, j] = 1
-    return encoded
-
-
-def load_chrom_names(chrom_sizes: str | Path, filter_out: Iterable[str] = ("_", "M", "Un", "EBV")) -> list[str]:
-    chroms = []
-    with Path(chrom_sizes).open() as handle:
-        for line in handle:
-            chrom = line.strip().split()[0]
-            if not chrom.startswith("chr"):
-                continue
-            if any(token in chrom for token in filter_out):
-                continue
-            chroms.append(chrom)
-    return chroms
-
-
-def load_bed(path: str | Path) -> dict[str, np.ndarray]:
-    raw = np.loadtxt(path, dtype=str, usecols=(0, 1, 2))
-    if raw.ndim == 1:
-        raw = raw[None, :]
-    return {
-        "chrom": raw[:, 0],
-        "start": raw[:, 1].astype(int),
-        "end": raw[:, 2].astype(int),
-    }
-
-
-def load_bed_lines(path: str | Path) -> list[list[str]]:
-    path = Path(path)
-    opener = gzip.open if path.suffix == ".gz" else open
-    mode = "rt" if path.suffix == ".gz" else "r"
-    with opener(path, mode) as handle:
-        return [line.strip().split() for line in handle if line.strip()]
-
-
-def load_centered_coords(path: str | Path, window: int) -> list[tuple[str, int, int]]:
-    coords = []
-    for line in load_bed_lines(path):
-        chrom, start, end = line[0], int(line[1]), int(line[2])
-        mid = (start + end) // 2
-        window_start = mid - int(window) // 2
-        coords.append((chrom, window_start, window_start + int(window)))
-    return coords
-
-
-def _open_bigwig(path: str | Path):
-    import pyBigWig
-
-    bw = pyBigWig.open(str(path), "r")
-    if bw is None:
-        raise OSError(f"Could not open BigWig: {path}")
-    return bw
-
-
-def _get_signal(bw, chrom: str, start: int, end: int) -> np.ndarray:
-    values = bw.values(chrom, start, end, numpy=True)
-    return np.nan_to_num(values).astype(np.float32, copy=False)
-
-
-def _get_signal_padded(bw, chrom: str, start: int, end: int) -> np.ndarray:
-    chrom_sizes = bw.chroms()
-    width = int(end) - int(start)
-    if chrom not in chrom_sizes:
-        return np.zeros(width, dtype=np.float32)
-
-    chrom_len = int(chrom_sizes[chrom])
-    query_start = max(int(start), 0)
-    query_end = min(int(end), chrom_len)
-    if query_start >= query_end:
-        return np.zeros(width, dtype=np.float32)
-
-    values = bw.values(chrom, query_start, query_end, numpy=True)
-    values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
-    left_pad = query_start - int(start)
-    right_pad = int(end) - query_end
-    if left_pad > 0 or right_pad > 0:
-        values = np.pad(values, (left_pad, right_pad), mode="constant")
-    return values
-
-
-def extract_observed_profiles(
-    plus_bw_path: str | Path,
-    minus_bw_path: str | Path,
+def _extract_mask_signal(
+    bw_path: str | Path,
     bed_path: str | Path,
-    output_length: int,
-) -> np.ndarray:
-    plus_bw = _open_bigwig(plus_bw_path)
-    minus_bw = _open_bigwig(minus_bw_path)
-    profiles = []
-    try:
-        for chrom, start, end in load_centered_coords(bed_path, output_length):
-            plus = _get_signal_padded(plus_bw, chrom, start, end)
-            minus = _get_signal_padded(minus_bw, chrom, start, end)
-            profiles.append(np.stack([plus, minus], axis=0))
-    finally:
-        plus_bw.close()
-        minus_bw.close()
-    return np.asarray(profiles, dtype=np.float32)
+    chroms: list[str],
+    kept_mask: torch.Tensor,
+    output_window: int,
+    n_channels: int,
+) -> Tensor:
+    import pandas
+    import pybigtools
 
+    bw = pybigtools.open(str(bw_path))
+    loci = pandas.read_csv(
+        str(bed_path), sep="\t", header=None, usecols=[0, 1, 2], names=["chrom", "start", "end"]
+    )
+    loci = loci[np.isin(loci["chrom"], chroms)].reset_index(drop=True)
+    loci = loci[kept_mask.numpy()].reset_index(drop=True)
 
-def _extract_one_locus(
-    *,
-    fasta,
-    bigwigs: list,
-    mask_bw,
-    chrom: str,
-    start: int,
-    end: int,
-    input_length: int,
-    output_length: int,
-    max_jitter: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    mid = start + (end - start) // 2
+    half = output_window // 2
+    odd = output_window % 2
 
-    half_in = input_length // 2
-    seq_start = mid - half_in - max_jitter
-    seq_end = mid + half_in + max_jitter + (input_length % 2)
-    if seq_start < 0:
-        raise ValueError(f"Sequence start is negative for {chrom}:{start}-{end}")
+    masks = []
+    for _, row in loci.iterrows():
+        mid = int(row["start"]) + (int(row["end"]) - int(row["start"])) // 2
+        start = mid - half
+        end = mid + half + odd
+        try:
+            values = np.array(bw.values(row["chrom"], start, end, fillna=0), dtype=np.float32)
+        except Exception:
+            values = np.zeros(output_window, dtype=np.float32)
+        values = np.nan_to_num(values)
+        one_strand = (values > 0)
+        masks.append(np.stack([one_strand] * n_channels))
 
-    half_out = output_length // 2
-    sig_start = mid - half_out - max_jitter
-    sig_end = mid + half_out + max_jitter + (output_length % 2)
-    if sig_start < 0:
-        raise ValueError(f"Signal start is negative for {chrom}:{start}-{end}")
-
-    seq = one_hot_encode(str(fasta[chrom][seq_start:seq_end])).T
-    signals = np.stack([_get_signal(bw, chrom, sig_start, sig_end) for bw in bigwigs])
-
-    mask = None
-    if mask_bw is not None:
-        mask_values = _get_signal(mask_bw, chrom, sig_start, sig_end)
-        mask_one_strand = (mask_values > 0).astype(np.bool_)
-        mask = np.stack([mask_one_strand] * len(bigwigs))
-
-    expected_seq_len = input_length + 2 * max_jitter
-    expected_sig_len = output_length + 2 * max_jitter
-    if seq.shape != (4, expected_seq_len):
-        raise ValueError(f"Unexpected sequence shape {seq.shape}; expected (4, {expected_seq_len})")
-    if signals.shape != (len(bigwigs), expected_sig_len):
-        raise ValueError(f"Unexpected signal shape {signals.shape}; expected ({len(bigwigs)}, {expected_sig_len})")
-    return seq, signals, mask
+    return torch.from_numpy(np.stack(masks))
 
 
 def extract_loci(
@@ -174,127 +72,37 @@ def extract_loci(
     max_jitter: int,
     verbose: bool = True,
 ) -> tuple[Tensor, Tensor, Tensor | None]:
-    from pyfaidx import Fasta
-    from tqdm import tqdm
+    from tangermeme.io import extract_loci as _tg_extract_loci
 
-    fasta = Fasta(str(genome_path), sequence_always_upper=True)
-    bigwigs = [_open_bigwig(path) for path in bw_paths]
-    mask_bw = _open_bigwig(mask_bw_path) if mask_bw_path else None
+    in_window = input_length + 2 * max_jitter
+    out_window = output_length + 2 * max_jitter
 
-    loci = load_bed(bed_path)
-    keep = np.isin(loci["chrom"], chroms)
-    kept_chroms = loci["chrom"][keep]
-    starts = loci["start"][keep]
-    ends = loci["end"][keep]
-    if verbose:
-        print(f"Loaded {len(kept_chroms)} loci from {bed_path}")
+    result = _tg_extract_loci(
+        loci=str(bed_path),
+        sequences=str(genome_path),
+        signals=[str(p) for p in bw_paths],
+        chroms=chroms,
+        in_window=in_window,
+        out_window=out_window,
+        max_jitter=0,
+        return_mask=(mask_bw_path is not None),
+        verbose=verbose,
+    )
 
-    seqs = []
-    signals = []
-    masks = []
-    try:
-        iterator = zip(kept_chroms, starts, ends)
-        for chrom, start, end in tqdm(iterator, total=len(kept_chroms), disable=not verbose, desc="Extracting loci"):
-            try:
-                seq, signal, mask = _extract_one_locus(
-                    fasta=fasta,
-                    bigwigs=bigwigs,
-                    mask_bw=mask_bw,
-                    chrom=str(chrom),
-                    start=int(start),
-                    end=int(end),
-                    input_length=input_length,
-                    output_length=output_length,
-                    max_jitter=max_jitter,
-                )
-            except ValueError as exc:
-                if verbose:
-                    print(f"Skipping {chrom}:{start}-{end}: {exc}")
-                continue
-            seqs.append(seq)
-            signals.append(signal)
-            if mask_bw is not None:
-                masks.append(mask)
-    finally:
-        fasta.close()
-        for bw in bigwigs:
-            bw.close()
-        if mask_bw is not None:
-            mask_bw.close()
-
-    if not seqs:
-        raise RuntimeError(f"No valid loci extracted from {bed_path}")
-
-    seq_tensor = torch.from_numpy(np.stack(seqs)).to(torch.float32)
-    signal_tensor = torch.from_numpy(np.stack(signals)).to(torch.float32)
-    mask_tensor = torch.from_numpy(np.stack(masks)).to(torch.bool) if mask_bw_path else None
-    if verbose:
-        print(
-            f"Extracted {seq_tensor.shape[0]} examples: "
-            f"seqs={tuple(seq_tensor.shape)}, signals={tuple(signal_tensor.shape)}, "
-            f"masks={tuple(mask_tensor.shape) if mask_tensor is not None else None}"
+    if mask_bw_path is not None:
+        seqs, signals, kept_mask = result
+        mask = _extract_mask_signal(
+            bw_path=mask_bw_path,
+            bed_path=bed_path,
+            chroms=chroms,
+            kept_mask=kept_mask,
+            output_window=out_window,
+            n_channels=int(signals.shape[1]),
         )
-    return seq_tensor, signal_tensor, mask_tensor
-
-
-class ProfileDataset(Dataset):
-    def __init__(
-        self,
-        *,
-        sequences: Tensor,
-        signals: Tensor,
-        masks: Tensor | None,
-        input_length: int,
-        output_length: int,
-        max_jitter: int,
-        reverse_complement: bool,
-        random_seed: int | None = None,
-    ) -> None:
-        self.sequences = sequences
-        self.signals = signals
-        self.masks = masks
-        self.input_length = int(input_length)
-        self.output_length = int(output_length)
-        self.max_jitter = int(max_jitter)
-        self.reverse_complement = bool(reverse_complement)
-        self.rng = np.random.RandomState(random_seed)
-        self._check_shapes()
-
-    def _check_shapes(self) -> None:
-        expected_seq_len = self.input_length + 2 * self.max_jitter
-        expected_signal_len = self.output_length + 2 * self.max_jitter
-        if self.sequences.ndim != 3 or self.sequences.shape[1:] != (4, expected_seq_len):
-            raise ValueError(f"Unexpected sequence shape {tuple(self.sequences.shape)}")
-        if self.signals.ndim != 3 or self.signals.shape[1:] != (2, expected_signal_len):
-            raise ValueError(f"Unexpected signal shape {tuple(self.signals.shape)}")
-        if self.masks is not None and tuple(self.masks.shape) != tuple(self.signals.shape):
-            raise ValueError(f"Mask shape {tuple(self.masks.shape)} does not match signals {tuple(self.signals.shape)}")
-
-    def __len__(self) -> int:
-        return int(self.sequences.shape[0])
-
-    def __getitem__(self, idx: int) -> dict[str, Tensor]:
-        if self.max_jitter == 0:
-            jitter = 0
-        else:
-            jitter = int(self.rng.randint(0, 2 * self.max_jitter))
-
-        x = self.sequences[idx, :, jitter : jitter + self.input_length]
-        y = self.signals[idx, :, jitter : jitter + self.output_length]
-        mask = None
-        if self.masks is not None:
-            mask = self.masks[idx, :, jitter : jitter + self.output_length]
-
-        if self.reverse_complement and np.random.rand() < 0.5:
-            x = torch.flip(x, dims=(0, 1))
-            y = torch.flip(y, dims=(0, 1))
-            if mask is not None:
-                mask = torch.flip(mask, dims=(0, 1))
-
-        item = {"x": x.to(torch.float32), "y": y.to(torch.float32)}
-        if mask is not None:
-            item["mask"] = mask.to(torch.bool)
-        return item
+        return seqs, signals, mask
+    else:
+        seqs, signals = result
+        return seqs, signals, None
 
 
 class MultiSourceBatchSampler(Sampler[list[int]]):
@@ -423,7 +231,7 @@ class ProCapDataModule:
         return self._loader(self.valid_dataset, shuffle=False, drop_last=False)
 
     def _loader(self, dataset, *, shuffle: bool, drop_last: bool) -> DataLoader:
-        kwargs = {
+        kwargs: dict = {
             "num_workers": self.num_workers,
             "pin_memory": self.pin_memory,
         }

@@ -21,7 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 from capybara import CAPY
 from data import ProfileDataset, extract_loci, load_chrom_names
 from file_config import FoldFilesConfig
-from performance_metrics import compute_performance_metrics
+from shared.metrics import compute_performance_metrics
 from procapnet import build_procapnet_model
 from train_utils import read_yaml, require_training_dependencies, select_device
 
