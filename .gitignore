@@ -232,3 +232,6 @@ data
 results/
 ProCapNet/
 
+context/
+chrombpnet/
+chrombpnet_data
