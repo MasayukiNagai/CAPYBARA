@@ -14,8 +14,7 @@ _EXAMPLES = Path(__file__).resolve().parents[1]
 if str(_EXAMPLES) not in sys.path:
     sys.path.insert(0, str(_EXAMPLES))
 
-from shared.data import ProfileDataset, load_chrom_names
-from tangermeme.io import extract_loci
+from capybara.data import ProfileDataset, extract_loci, load_chrom_names
 
 
 class AtacDataModule:
@@ -57,18 +56,17 @@ class AtacDataModule:
 
     def _make_dataset(self, bed_path: str, *, jitter: bool, reverse_complement: bool) -> ProfileDataset:
         max_jitter = int(self.config["max_jitter"]) if jitter else 0
-        result = extract_loci(
-            loci=bed_path,
-            sequences=self.config["genome_path"],
-            signals=[self.config["atac_bw_path"]],
+        seqs, signals, _ = extract_loci(
+            genome_path=self.config["genome_path"],
             chroms=self.chroms,
-            in_window=int(self.config["input_length"]) + 2 * max_jitter,
-            out_window=int(self.config["output_length"]) + 2 * max_jitter,
-            max_jitter=0,  # window already expanded; jitter applied in ProfileDataset
+            bw_paths=[self.config["atac_bw_path"]],
+            bed_path=bed_path,
+            input_length=int(self.config["input_length"]),
+            output_length=int(self.config["output_length"]),
+            max_jitter=max_jitter,
             summits=True,
             verbose=self.verbose,
         )
-        seqs, signals = result
         return ProfileDataset(
             sequences=seqs,
             signals=signals,

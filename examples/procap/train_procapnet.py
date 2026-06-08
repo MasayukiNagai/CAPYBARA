@@ -10,15 +10,13 @@ from torch import nn
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data import ProCapDataModule
-from file_config import FoldFilesConfig
-from procapnet import build_procapnet_model
-from train_utils import (
+from examples.procap.data import ProCapDataModule
+from examples.procap.file_config import FoldFilesConfig
+from examples.procap.procapnet import build_procapnet_model
+from examples.shared.train_utils import (
     configure_count_finetune_parameters,
     fine_tune_timestamp,
     finetune_count_head,

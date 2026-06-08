@@ -12,7 +12,7 @@ from scipy.stats import spearmanr
 from torch import Tensor, nn
 
 from capybara.losses import count_log1p_mse_loss, profile_mnll_loss
-from metrics import compute_performance_metrics
+from capybara.metrics import compute_performance_metrics
 
 METRICS_COLUMNS = [
     "row_type",
@@ -125,7 +125,7 @@ def make_count_finetune_params(
 
 def require_training_dependencies() -> None:
     missing = []
-    for module_name in ("tangermeme", "scipy", "tqdm", "yaml"):
+    for module_name in ("pybigtools", "pyfaidx", "scipy", "yaml"):
         try:
             __import__(module_name)
         except ImportError:
@@ -329,17 +329,18 @@ def validate(
     measures = compute_performance_metrics(
         y_valid, y_pred_log_probs, y_valid_counts, y_pred_log_counts, 7, 81
     )
-    valid_profile_loss = float(measures["nll"].mean())
+    profile_valid = np.squeeze(y_valid_counts, axis=-1) > 0
+    valid_profile_loss = finite_mean(measures["nll"], mask=profile_valid)
     valid_count_loss = float(measures["count_mse"].mean())
     return {
         "valid_loss": valid_profile_loss + float(counts_weight) * valid_count_loss,
         "valid_profile_loss": valid_profile_loss,
-        "valid_jsd": float(measures["jsd"].mean()),
-        "valid_profile_pearson": float(measures["profile_pearson"].mean()),
-        "valid_count_pearson": float(measures["count_pearson"].mean()),
-        "valid_count_spearman": float(measures["count_spearman"].mean()),
+        "valid_jsd": finite_mean(measures["jsd"], mask=profile_valid),
+        "valid_profile_pearson": finite_mean(measures["profile_pearson"], mask=profile_valid),
+        "valid_count_pearson": finite_mean(measures["count_pearson"]),
+        "valid_count_spearman": finite_mean(measures["count_spearman"]),
         "valid_count_loss": valid_count_loss,
-        "valid_count_r2": float(measures["count_r2"].mean()),
+        "valid_count_r2": finite_mean(measures["count_r2"]),
     }
 
 
@@ -454,6 +455,16 @@ def count_only_metrics(true_log_counts: np.ndarray, pred_log_counts: np.ndarray)
         "valid_count_spearman": float(spearmanr(pred, truth).correlation),
         "valid_count_r2": float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan"),
     }
+
+
+def finite_mean(values: np.ndarray, mask: np.ndarray | None = None) -> float:
+    values = np.asarray(values)
+    if mask is not None:
+        values = values[np.asarray(mask, dtype=bool)]
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.mean(finite))
 
 
 @torch.no_grad()

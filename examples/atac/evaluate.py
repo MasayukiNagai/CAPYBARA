@@ -14,18 +14,15 @@ from torch.utils.data import DataLoader
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-SHARED_DIR = SCRIPT_DIR.parent / "shared"
-for _p in (str(SCRIPT_DIR), str(REPO_ROOT), str(SHARED_DIR)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from capybara import CAPY, load_config
-from data import AtacDataModule
-from shared.data import ProfileDataset, load_chrom_names
-from shared.metrics import compute_performance_metrics
-from file_config import AtacFoldFilesConfig
-from tangermeme.io import extract_loci
-from train_utils import read_yaml, require_training_dependencies, select_device
+from capybara.data import extract_loci, load_chrom_names
+from examples.atac.data import AtacDataModule
+from examples.atac.file_config import AtacFoldFilesConfig
+from capybara.metrics import compute_performance_metrics
+from examples.shared.train_utils import read_yaml, require_training_dependencies, select_device
 
 
 PROFILE_METRIC_COLUMNS = ["nll", "cross_ent", "jsd", "profile_pearson", "profile_spearman", "profile_mse"]
@@ -85,18 +82,17 @@ def make_eval_loader(
     dataset_params = params["dataset"]
     peak_path = split_peak_path(files, split)
     chroms = load_chrom_names(files.chrom_size_path)
-    result = extract_loci(
-        loci=str(peak_path),
-        sequences=str(files.genome_path),
-        signals=[str(files.atac_bw_path)],
+    seqs, signals, _ = extract_loci(
+        genome_path=files.genome_path,
         chroms=chroms,
-        in_window=int(dataset_params["input_length"]),
-        out_window=int(dataset_params["output_length"]),
+        bw_paths=[files.atac_bw_path],
+        bed_path=peak_path,
+        input_length=int(dataset_params["input_length"]),
+        output_length=int(dataset_params["output_length"]),
         max_jitter=0,
         summits=True,
         verbose=verbose,
     )
-    seqs, signals = result
     dataset = ProfileDataset(
         sequences=seqs,
         signals=signals,
@@ -217,30 +213,28 @@ def load_replicate_profiles(
     verbose: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Load rep1 and rep2 signal at the same peaks used for evaluation."""
-    result1 = extract_loci(
-        loci=str(peak_path),
-        sequences=str(files.genome_path),
-        signals=[str(files.rep1_bw_path)],
+    _, rep1, _ = extract_loci(
+        genome_path=files.genome_path,
         chroms=chroms,
-        in_window=output_length,
-        out_window=output_length,
+        bw_paths=[files.rep1_bw_path],
+        bed_path=peak_path,
+        input_length=output_length,
+        output_length=output_length,
         max_jitter=0,
         summits=True,
         verbose=verbose,
     )
-    result2 = extract_loci(
-        loci=str(peak_path),
-        sequences=str(files.genome_path),
-        signals=[str(files.rep2_bw_path)],
+    _, rep2, _ = extract_loci(
+        genome_path=files.genome_path,
         chroms=chroms,
-        in_window=output_length,
-        out_window=output_length,
+        bw_paths=[files.rep2_bw_path],
+        bed_path=peak_path,
+        input_length=output_length,
+        output_length=output_length,
         max_jitter=0,
         summits=True,
         verbose=verbose,
     )
-    _, rep1 = result1
-    _, rep2 = result2
     return rep1.numpy(), rep2.numpy()
 
 
@@ -265,6 +259,16 @@ def compute_standard_metrics(
         true_metrics, pred_metrics, true_counts, pred_counts,
         smooth_true_profs=False, smooth_pred_profs=False,
     )
+
+
+def finite_mean(values: np.ndarray, mask: np.ndarray | None = None) -> float:
+    values = np.asarray(values)
+    if mask is not None:
+        values = values[np.asarray(mask, dtype=bool)]
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.mean(finite))
 
 
 def write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
@@ -305,9 +309,17 @@ def save_outputs(
 
     N = true_profiles.shape[0]
     true_log_counts = np.log1p(true_profiles.sum(axis=(1, 2)))
+    profile_valid = true_profiles.sum(axis=(1, 2)) > 0
 
     # Summary metrics CSV
-    summary = {key: float(np.nanmean(standard_metrics[key])) for key in SUMMARY_METRIC_COLUMNS}
+    summary = {
+        key: finite_mean(np.ravel(standard_metrics[key]), mask=profile_valid)
+        for key in PROFILE_METRIC_COLUMNS
+    }
+    summary.update({
+        key: finite_mean(standard_metrics[key])
+        for key in ("count_pearson", "count_spearman", "count_mse", "count_r2")
+    })
     summary.update({
         "model_name": "capy",
         "cell_type": args.cell_type,

@@ -7,15 +7,13 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-SHARED_DIR = SCRIPT_DIR.parent / "shared"
-for _p in (str(SCRIPT_DIR), str(REPO_ROOT), str(SHARED_DIR)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from capybara import CAPY, load_config, print_model_summary
-from data import AtacDataModule
-from file_config import AtacFoldFilesConfig
-from train_utils import (
+from examples.atac.data import AtacDataModule
+from examples.atac.file_config import AtacFoldFilesConfig
+from examples.shared.train_utils import (
     read_yaml,
     require_training_dependencies,
     select_device,
@@ -93,6 +91,7 @@ def main() -> None:
     write_yaml(files.params_path, params)
     write_yaml(files.config_path, config_dict)
 
+    print("Building datamodule...", flush=True)
     datamodule = build_datamodule(
         files=files,
         params=params,
@@ -101,6 +100,7 @@ def main() -> None:
         verbose=args.verbose,
     )
 
+    print("Building model...", flush=True)
     model = CAPY(model_cfg)
     metadata = {
         "model_name": "capy",

@@ -72,7 +72,7 @@ bash examples/atac/prepare_data.sh
 
 Edit the variables at the top of `prepare_data.sh` (set `PROJ_DIR`, `CELL_TYPE`, `FOLD`). The default `INPUT_BAM` and `BLACKLIST` paths point to where `download_data.sh` places files.
 
-**Requirements:** `pip install "capybara[atac]"` (installs pysam, pyBigWig, etc.)
+**Requirements:** `pip install "capybara[atac]"` (installs pysam, pybigtools, pyfaidx, etc.)
 
 This runs two steps using scripts in this directory:
 

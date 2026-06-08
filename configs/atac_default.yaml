@@ -6,8 +6,8 @@ model:
   num_groups: 8
   encoder_channels: [128, 192, 256]
   pool_size: 2
-  decoder_channels: [256, 192, 128, 64]
-  output_embedder_channels: 256
+  decoder_channels: [256, 192, 128, 128]
+  output_embedder_channels: 128
   embedding_projector:
     enabled: true
   norm_type: batch
@@ -21,7 +21,7 @@ model:
 
   count_head:
     type: ynet
-    source:
+    source: bottleneck
     conv_hidden_dims: [128, 64]
     mlp_hidden_dims: [64]
     kernel_size: 5
@@ -30,7 +30,6 @@ model:
     dropout: 0.1
     norm_type: batch
     mlp_norm_type: layer
-    num_groups: 8
 
   bottleneck:
     type: hybrid_attention
@@ -80,5 +79,5 @@ lr_scheduler:
     min_lr: 1.0e-6
 
 wandb:
-  enabled: false
+  enabled: true
   project: capybara-atac

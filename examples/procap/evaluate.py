@@ -13,17 +13,15 @@ from torch.utils.data import DataLoader
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from capybara import CAPY
-from data import ProfileDataset, extract_loci, load_chrom_names
-from file_config import FoldFilesConfig
-from shared.metrics import compute_performance_metrics
-from procapnet import build_procapnet_model
-from train_utils import read_yaml, require_training_dependencies, select_device
+from capybara.data import ProfileDataset, extract_loci, load_chrom_names
+from capybara.metrics import compute_performance_metrics
+from examples.procap.file_config import FoldFilesConfig
+from examples.procap.procapnet import build_procapnet_model
+from examples.shared.train_utils import read_yaml, require_training_dependencies, select_device
 
 
 PROFILE_METRIC_COLUMNS = [

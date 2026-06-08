@@ -10,15 +10,13 @@ from torch import nn
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from capybara import CAPY, load_config, print_model_summary
-from data import ProCapDataModule
-from file_config import FoldFilesConfig
-from train_utils import (
+from examples.procap.data import ProCapDataModule
+from examples.procap.file_config import FoldFilesConfig
+from examples.shared.train_utils import (
     configure_count_finetune_parameters,
     fine_tune_timestamp,
     finetune_count_head,
@@ -40,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_type", type=str, default="procap")
     parser.add_argument("--fold", type=int, default=1)
     parser.add_argument("--timestamp", type=str, default=None)
-    parser.add_argument("--stage", choices=["train", "finetune", "both"], default="both")
+    parser.add_argument("--stage", choices=["train", "finetune", "both"], default="train")
     parser.add_argument("--device", type=str, default="gpu", help="Device: gpu, cpu, auto, or a torch device string.")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging for this run.")

@@ -5,14 +5,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch import Tensor
 from torch.utils.data import ConcatDataset, DataLoader, Sampler
 
 _EXAMPLES = Path(__file__).resolve().parents[1]
 if str(_EXAMPLES) not in sys.path:
     sys.path.insert(0, str(_EXAMPLES))
 
-from shared.data import ProfileDataset, load_chrom_names
+from capybara.data import ProfileDataset, extract_loci, load_chrom_names
 
 __all__ = [
     "ProfileDataset",
@@ -21,88 +20,6 @@ __all__ = [
     "MultiSourceBatchSampler",
     "ProCapDataModule",
 ]
-
-
-def _extract_mask_signal(
-    bw_path: str | Path,
-    bed_path: str | Path,
-    chroms: list[str],
-    kept_mask: torch.Tensor,
-    output_window: int,
-    n_channels: int,
-) -> Tensor:
-    import pandas
-    import pybigtools
-
-    bw = pybigtools.open(str(bw_path))
-    loci = pandas.read_csv(
-        str(bed_path), sep="\t", header=None, usecols=[0, 1, 2], names=["chrom", "start", "end"]
-    )
-    loci = loci[np.isin(loci["chrom"], chroms)].reset_index(drop=True)
-    loci = loci[kept_mask.numpy()].reset_index(drop=True)
-
-    half = output_window // 2
-    odd = output_window % 2
-
-    masks = []
-    for _, row in loci.iterrows():
-        mid = int(row["start"]) + (int(row["end"]) - int(row["start"])) // 2
-        start = mid - half
-        end = mid + half + odd
-        try:
-            values = np.array(bw.values(row["chrom"], start, end, fillna=0), dtype=np.float32)
-        except Exception:
-            values = np.zeros(output_window, dtype=np.float32)
-        values = np.nan_to_num(values)
-        one_strand = (values > 0)
-        masks.append(np.stack([one_strand] * n_channels))
-
-    return torch.from_numpy(np.stack(masks))
-
-
-def extract_loci(
-    *,
-    genome_path: str | Path,
-    chroms: list[str],
-    bw_paths: list[str | Path],
-    bed_path: str | Path,
-    mask_bw_path: str | Path | None = None,
-    input_length: int,
-    output_length: int,
-    max_jitter: int,
-    verbose: bool = True,
-) -> tuple[Tensor, Tensor, Tensor | None]:
-    from tangermeme.io import extract_loci as _tg_extract_loci
-
-    in_window = input_length + 2 * max_jitter
-    out_window = output_length + 2 * max_jitter
-
-    result = _tg_extract_loci(
-        loci=str(bed_path),
-        sequences=str(genome_path),
-        signals=[str(p) for p in bw_paths],
-        chroms=chroms,
-        in_window=in_window,
-        out_window=out_window,
-        max_jitter=0,
-        return_mask=(mask_bw_path is not None),
-        verbose=verbose,
-    )
-
-    if mask_bw_path is not None:
-        seqs, signals, kept_mask = result
-        mask = _extract_mask_signal(
-            bw_path=mask_bw_path,
-            bed_path=bed_path,
-            chroms=chroms,
-            kept_mask=kept_mask,
-            output_window=out_window,
-            n_channels=int(signals.shape[1]),
-        )
-        return seqs, signals, mask
-    else:
-        seqs, signals = result
-        return seqs, signals, None
 
 
 class MultiSourceBatchSampler(Sampler[list[int]]):
