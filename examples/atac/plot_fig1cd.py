@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 import matplotlib
@@ -24,6 +25,16 @@ def parse_args() -> argparse.Namespace:
 
 def _load(eval_dir: Path, name: str) -> np.ndarray:
     return np.load(eval_dir / name)
+
+
+def _load_metric_column(path, column):
+    values = []
+    with path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            raw = row.get(column, "nan")
+            values.append(float(raw) if raw != "" else float("nan"))
+    return np.asarray(values, dtype=np.float64)
+
 
 
 def plot_fig1c(
@@ -60,7 +71,7 @@ def plot_fig1c(
 
 
 def plot_fig1d(
-    jsd_pred: np.ndarray,
+    jsd_model: np.ndarray,
     jsd_shuffled: np.ndarray,
     jsd_mean: np.ndarray,
     jsd_pseudorep: np.ndarray,
@@ -73,14 +84,18 @@ def plot_fig1d(
     bins = np.linspace(0, 1, 101)
 
     data = [
-        (jsd_pred, "blue", f"Predicted vs Observed (median={np.nanmedian(jsd_pred):.3f})"),
-        (jsd_shuffled, "black", f"Shuffled Observed vs Observed (median={np.nanmedian(jsd_shuffled):.3f})"),
-        (jsd_mean, "green", f"Mean Observed vs Observed (median={np.nanmedian(jsd_mean):.3f})"),
-        (jsd_pseudorep, "red", f"Pseudoreplicate upper bound (median={np.nanmedian(jsd_pseudorep):.3f})"),
+        (jsd_model, "blue", "Predicted vs Observed"),
+        (jsd_shuffled, "black", "Shuffled Observed vs Observed"),
+        (jsd_mean, "green", "Mean Observed vs Observed"),
+        (jsd_pseudorep, "red", "Pseudoreplicate upper bound"),
     ]
-    for arr, color, label in data:
-        ax.hist(arr[np.isfinite(arr)], bins=bins, color=color, alpha=0.5, label=label)
-        ax.axvline(np.nanmedian(arr), color=color, linestyle="--", linewidth=1.2)
+    for arr, color, label_prefix in data:
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            continue
+        median = float(np.median(finite))
+        ax.hist(finite, bins=bins, color=color, alpha=0.5, label=f"{label_prefix} (median={median:.3f})")
+        ax.axvline(median, color=color, linestyle="--", linewidth=1.2)
 
     ax.set_xlabel("Jensen-Shannon Distance")
     ax.set_ylabel("Number of peaks")
@@ -116,21 +131,19 @@ def main() -> None:
         print(f"Skipping Fig 1c: count .npy files not found in {eval_dir}")
 
     # Fig 1d: JSD distributions
-    jsd_keys = ["jsd_pred", "jsd_shuffled", "jsd_mean", "jsd_pseudorep"]
-    jsd_paths = {k: eval_dir / f"{ct}_{k}{suf}_{split}.npy" for k in jsd_keys}
-    if all(p.exists() for p in jsd_paths.values()):
+    profile_path = eval_dir / f"{ct}_metrics_profile{suf}_{split}.csv"
+    if profile_path.exists():
         plot_fig1d(
-            _load(eval_dir, f"{ct}_jsd_pred{suf}_{split}.npy"),
-            _load(eval_dir, f"{ct}_jsd_shuffled{suf}_{split}.npy"),
-            _load(eval_dir, f"{ct}_jsd_mean{suf}_{split}.npy"),
-            _load(eval_dir, f"{ct}_jsd_pseudorep{suf}_{split}.npy"),
+            _load_metric_column(profile_path, "jsd"),
+            _load_metric_column(profile_path, "jsd_shuffled"),
+            _load_metric_column(profile_path, "jsd_mean"),
+            _load_metric_column(profile_path, "jsd_pseudorep"),
             cell_type=ct,
             fold=fold,
             out_path=eval_dir / f"fig1d_{ct}_fold{fold}{suf}.pdf",
         )
     else:
-        missing = [str(p) for p in jsd_paths.values() if not p.exists()]
-        print(f"Skipping Fig 1d: missing JSD arrays: {missing}")
+        print(f"Skipping Fig 1d: metrics profile CSV not found: {profile_path}")
 
 
 if __name__ == "__main__":

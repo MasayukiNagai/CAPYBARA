@@ -22,7 +22,7 @@ class AtacFoldFilesConfig:
         *,
         proj_dir: str | Path,
         cell_type: str = "K562",
-        fold: int | str = 1,
+        fold: int | str = 0,
         model_name: str,
         timestamp: str | None = None,
     ) -> "AtacFoldFilesConfig":
@@ -31,8 +31,8 @@ class AtacFoldFilesConfig:
             raise ValueError(f"Unsupported cell_type={cell_type!r}. Expected one of {sorted(VALID_CELL_TYPES)}.")
 
         fold = int(fold)
-        if fold < 1 or fold > 5:
-            raise ValueError(f"fold must be in [1, 5], got {fold}.")
+        if not (0 <= fold <= 4):
+            raise ValueError(f"fold must be in [0, 4], got {fold}.")
 
         timestamp = timestamp or datetime.now().strftime("%y%m%d_%H%M%S")
         cfg = cls(
@@ -78,16 +78,24 @@ class AtacFoldFilesConfig:
         return self.processed_dir / f"peaks_fold{self.fold}_train.bed.gz"
 
     @property
+    def valid_peak_path(self) -> Path:
+        return self.processed_dir / f"peaks_fold{self.fold}_valid.bed.gz"
+
+    @property
     def val_peak_path(self) -> Path:
-        return self.processed_dir / f"peaks_fold{self.fold}_val.bed.gz"
+        return self.valid_peak_path
 
     @property
     def test_peak_path(self) -> Path:
         return self.processed_dir / f"peaks_fold{self.fold}_test.bed.gz"
 
     @property
+    def train_valid_peak_path(self) -> Path:
+        return self.processed_dir / f"peaks_fold{self.fold}_train_and_valid.bed.gz"
+
+    @property
     def train_val_peak_path(self) -> Path:
-        return self.processed_dir / f"peaks_fold{self.fold}_train_and_val.bed.gz"
+        return self.train_valid_peak_path
 
     @property
     def model_dir(self) -> Path:
@@ -128,9 +136,9 @@ class AtacFoldFilesConfig:
             self.all_peak_path,
             self.atac_bw_path,
             self.train_peak_path,
-            self.val_peak_path,
+            self.valid_peak_path,
             self.test_peak_path,
-            self.train_val_peak_path,
+            self.train_valid_peak_path,
         ]
         missing = [str(p) for p in required if not p.exists()]
         if missing:
@@ -157,9 +165,11 @@ class AtacFoldFilesConfig:
             "atac_bw_path": str(self.atac_bw_path),
             "rep1_bw_path": str(self.rep1_bw_path),
             "rep2_bw_path": str(self.rep2_bw_path),
+            "valid_peak_path": str(self.valid_peak_path),
             "train_peak_path": str(self.train_peak_path),
             "val_peak_path": str(self.val_peak_path),
             "test_peak_path": str(self.test_peak_path),
+            "train_valid_peak_path": str(self.train_valid_peak_path),
             "train_val_peak_path": str(self.train_val_peak_path),
             "model_dir": str(self.model_dir),
             "checkpoint_dir": str(self.checkpoint_dir),

@@ -17,9 +17,8 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from capybara import CAPY, load_config
-from capybara.data import extract_loci, load_chrom_names
-from examples.atac.data import AtacDataModule
+from capybara import CAPY
+from capybara.data import ProfileDataset, extract_loci, load_chrom_names
 from examples.atac.file_config import AtacFoldFilesConfig
 from capybara.metrics import compute_performance_metrics
 from examples.shared.train_utils import read_yaml, require_training_dependencies, select_device
@@ -27,7 +26,8 @@ from examples.shared.train_utils import read_yaml, require_training_dependencies
 
 PROFILE_METRIC_COLUMNS = ["nll", "cross_ent", "jsd", "profile_pearson", "profile_spearman", "profile_mse"]
 SUMMARY_METRIC_COLUMNS = [*PROFILE_METRIC_COLUMNS, "count_pearson", "count_spearman", "count_mse", "count_r2"]
-SPLITS = ["train", "val", "test", "all"]
+SPLITS = ["train", "valid", "val", "test", "all"]
+JSD_BASELINE_COLUMNS = ["jsd_shuffled", "jsd_mean", "jsd_pseudorep"]
 
 # Smoothing kernel matching ChromBPNet's pseudoreplicate JSD computation
 _SMOOTH_SIGMA = 7
@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate a trained CAPY ATAC-seq model.")
     parser.add_argument("--proj_dir", type=Path, required=True)
     parser.add_argument("--cell_type", type=str, default="K562")
-    parser.add_argument("--fold", type=int, default=1)
+    parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--timestamp", type=str, required=True)
     parser.add_argument("--split", choices=SPLITS, default="test")
     parser.add_argument("--reverse_complement", action="store_true")
@@ -49,9 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
+def canonical_split(split: str) -> str:
+    return "valid" if split == "val" else split
+
 
 def split_peak_path(files: AtacFoldFilesConfig, split: str) -> Path:
+    split = canonical_split(split)
     return {
+        "valid": files.valid_peak_path,
         "train": files.train_peak_path,
         "val": files.val_peak_path,
         "test": files.test_peak_path,
@@ -175,8 +180,8 @@ def _jsd_per_peak(obs: np.ndarray, pred: np.ndarray, pseudocount: float = 1e-3) 
 def compute_jsd_arrays(
     true_profiles: np.ndarray,
     pred_log_profiles: np.ndarray,
-    rep1_profiles: np.ndarray,
-    rep2_profiles: np.ndarray,
+    rep1_profiles: np.ndarray | None = None,
+    rep2_profiles: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Compute the four JSD distributions needed for Fig 1d.
 
@@ -184,24 +189,23 @@ def compute_jsd_arrays(
     """
     # Squeeze channel dim; shape becomes (N, L)
     obs = true_profiles[:, 0, :]
-    pred_prob = np.exp(pred_log_profiles[:, 0, :])
-    r1 = rep1_profiles[:, 0, :]
-    r2 = rep2_profiles[:, 0, :]
-
-    # Smooth replicates as in ChromBPNet 1d_make_jsd_plots.py
-    r1_smooth = scipy.ndimage.gaussian_filter1d(r1.astype(np.float64), _SMOOTH_SIGMA, axis=-1, truncate=_SMOOTH_TRUNCATE)
-    r2_smooth = scipy.ndimage.gaussian_filter1d(r2.astype(np.float64), _SMOOTH_SIGMA, axis=-1, truncate=_SMOOTH_TRUNCATE)
-
+    if rep1_profiles is not None and rep2_profiles is not None:
+        r1 = rep1_profiles[:, 0, :]
+        r2 = rep2_profiles[:, 0, :]
+        r1_smooth = scipy.ndimage.gaussian_filter1d(r1.astype(np.float64), _SMOOTH_SIGMA, axis=-1, truncate=_SMOOTH_TRUNCATE)
+        r2_smooth = scipy.ndimage.gaussian_filter1d(r2.astype(np.float64), _SMOOTH_SIGMA, axis=-1, truncate=_SMOOTH_TRUNCATE)
+        jsd_pseudorep = _jsd_per_peak(r1_smooth, r2_smooth)
+    else:
+        jsd_pseudorep = np.full(obs.shape[0], np.nan, dtype=np.float64)
     mean_profile = obs.mean(axis=0, keepdims=True).repeat(obs.shape[0], axis=0)
 
     rng = np.random.default_rng(seed=0)
     shuffled = np.array([rng.permutation(obs[i]) for i in range(obs.shape[0])])
 
     return {
-        "jsd_pred": _jsd_per_peak(obs, pred_prob),
         "jsd_shuffled": _jsd_per_peak(obs, shuffled),
         "jsd_mean": _jsd_per_peak(obs, mean_profile),
-        "jsd_pseudorep": _jsd_per_peak(r1_smooth, r2_smooth),
+        "jsd_pseudorep": jsd_pseudorep,
     }
 
 
@@ -296,11 +300,13 @@ def save_outputs(
     files: AtacFoldFilesConfig,
     args: argparse.Namespace,
     params: dict[str, Any],
+    model_name: str = "capy",
+    source_metadata: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     eval_dir = files.eval_dir
     eval_dir.mkdir(parents=True, exist_ok=True)
     prefix = args.cell_type
-    split = args.split
+    split = canonical_split(args.split)
     rc_suffix = "_rc" if args.reverse_complement else ""
 
     true_profiles = model_results["true_profiles"]
@@ -310,6 +316,8 @@ def save_outputs(
     N = true_profiles.shape[0]
     true_log_counts = np.log1p(true_profiles.sum(axis=(1, 2)))
     profile_valid = true_profiles.sum(axis=(1, 2)) > 0
+    if jsd_arrays is None:
+        jsd_arrays = {key: np.full(N, np.nan, dtype=np.float64) for key in JSD_BASELINE_COLUMNS}
 
     # Summary metrics CSV
     summary = {
@@ -321,7 +329,7 @@ def save_outputs(
         for key in ("count_pearson", "count_spearman", "count_mse", "count_r2")
     })
     summary.update({
-        "model_name": "capy",
+        "model_name": model_name,
         "cell_type": args.cell_type,
         "data_type": "atac",
         "fold": int(args.fold),
@@ -330,21 +338,27 @@ def save_outputs(
         "reverse_complement": bool(args.reverse_complement),
         "num_examples": N,
     })
-    if jsd_arrays is not None:
-        for key, arr in jsd_arrays.items():
-            summary[f"{key}_median"] = float(np.nanmedian(arr))
+    for key in JSD_BASELINE_COLUMNS:
+        arr = np.asarray(jsd_arrays[key])
+        summary[key] = finite_mean(arr)
+        finite = arr[np.isfinite(arr)]
+        summary[f"{key}_median"] = float(np.median(finite)) if finite.size else float("nan")
+    jsd_arr = np.ravel(standard_metrics["jsd"])
+    jsd_finite = jsd_arr[np.isfinite(jsd_arr)]
+    summary["jsd_median"] = float(np.median(jsd_finite)) if jsd_finite.size else float("nan")
 
     summary_path = eval_dir / f"{prefix}_metrics_summary{rc_suffix}_{split}.csv"
     profile_path = eval_dir / f"{prefix}_metrics_profile{rc_suffix}_{split}.csv"
     log_path = eval_dir / f"{prefix}_eval_log{rc_suffix}_{split}.txt"
 
     write_csv(summary_path, [summary], list(summary.keys()))
-
-    profile_rows = [
-        {"example_index": i, **{key: float(np.ravel(standard_metrics[key])[i]) for key in PROFILE_METRIC_COLUMNS}}
-        for i in range(N)
-    ]
-    write_csv(profile_path, profile_rows, ["example_index", *PROFILE_METRIC_COLUMNS])
+    profile_rows = []
+    for i in range(N):
+        row = {"example_index": i}
+        row.update({key: float(np.ravel(standard_metrics[key])[i]) for key in PROFILE_METRIC_COLUMNS})
+        row.update({key: float(np.asarray(jsd_arrays[key])[i]) for key in JSD_BASELINE_COLUMNS})
+        profile_rows.append(row)
+    write_csv(profile_path, profile_rows, ["example_index", *PROFILE_METRIC_COLUMNS, *JSD_BASELINE_COLUMNS])
 
     saved_paths: dict[str, str] = {
         "metrics_summary": str(summary_path),
@@ -365,21 +379,18 @@ def save_outputs(
             "log_true_counts": str(true_counts_path),
         })
 
-    if jsd_arrays is not None:
-        for key, arr in jsd_arrays.items():
-            p = eval_dir / f"{prefix}_{key}{rc_suffix}_{split}.npy"
-            np.save(p, arr)
-            saved_paths[key] = str(p)
 
     log_payload = {
         "args": vars(args),
-        "checkpoint_path": str(files.best_checkpoint_path),
+        "checkpoint_path": str(files.best_checkpoint_path) if files.best_checkpoint_path.exists() else None,
         "params_path": str(files.params_path),
         "peak_path": str(split_peak_path(files, split)),
         "output_length": int(params["dataset"]["output_length"]),
         "outputs": saved_paths,
         "summary": summary,
     }
+    if source_metadata is not None:
+        log_payload["source_metadata"] = source_metadata
     with log_path.open("w") as f:
         f.write(json.dumps(log_payload, default=json_default, indent=2, sort_keys=True) + "\n")
 
@@ -451,6 +462,11 @@ def run(args: argparse.Namespace) -> None:
     except FileNotFoundError as exc:
         print(f"Skipping pseudoreplicate JSD (rep BigWigs not found): {exc}", flush=True)
 
+    if jsd_arrays is None:
+        jsd_arrays = compute_jsd_arrays(
+            model_results["true_profiles"],
+            model_results["pred_log_profiles"],
+        )
     saved_paths = save_outputs(
         model_results=model_results,
         jsd_arrays=jsd_arrays,

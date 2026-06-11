@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proj_dir", type=Path, required=True)
     parser.add_argument("--params", type=Path, default=REPO_ROOT / "configs" / "atac_default.yaml")
     parser.add_argument("--cell_type", type=str, default="K562")
-    parser.add_argument("--fold", type=int, default=1)
+    parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--timestamp", type=str, default=None)
     parser.add_argument("--device", type=str, default="gpu", help="Device: gpu, cpu, auto, or a torch device string.")
     parser.add_argument("--verbose", action="store_true")

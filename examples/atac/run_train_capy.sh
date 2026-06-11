@@ -23,7 +23,7 @@ timestamp="${1:-}"
 proj_dir="${ATAC_PROJ_DIR:-/grid/koo/home/shared/capybara/chrombpnet}"
 params="${2:-${REPO_ROOT}/configs/atac_default.yaml}"
 cell_type="${3:-K562}"
-fold="${4:-1}"
+fold="${4:-0}"
 gpu="${5:-0}"
 
 script="${REPO_ROOT}/examples/atac/train_capy.py"
