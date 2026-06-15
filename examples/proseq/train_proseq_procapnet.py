@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+"""Train ProCapNet on processed PRO-seq / gene-body (Rogers-timecourse) data.
+
+This is the ProCapNet analogue of ``examples/proseq/train_proseq.py``. It retrains
+the BPNet-style ProCapNet (``examples/procap/procapnet.py``) on the SAME PRO-seq
+data and task as the CAPY proseq model: single-strand, TSS-anchored windows
+(``in_window=[-2000,4000]``, ``out_window=[0,2000]``). The only ProCapNet change is
+``model.n_outputs: 1`` (PRO-cap uses 2) and ``trimming: 2000``; both come from
+``configs/proseq_procapnet.yaml``.
+
+It mirrors ``examples/procap/train_procapnet.py`` but swaps in the PRO-seq data
+path (``ProSeqDataModule`` + ``ProSeqFilesConfig``) and the relaxed PRO-seq
+performance metrics, exactly as ``train_proseq.py`` does for CAPY. The model
+builder, losses, and training loop (``examples/procap/train_utils.py``) are reused
+unchanged.
+
+Example:
+    .venv/bin/python examples/proseq/train_proseq_procapnet.py \
+        --proj_dir /grid/koo/home/ykang/elongation/CAPYBARA/results/runs \
+        --params configs/proseq_procapnet.yaml \
+        --treatment GSM8306530_0m --fold fold1 --stage both --device gpu
+"""
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import torch
+from torch import nn
+
+SCRIPT_DIR = Path(__file__).resolve().parent            # examples/proseq
+REPO_ROOT = SCRIPT_DIR.parents[1]                        # repo root
+PROCAP_DIR = REPO_ROOT / "examples" / "procap"           # reused train_utils + procapnet
+# Order matters: proseq first so `import data` resolves to OUR data.py, then
+# procap (for train_utils / procapnet), then the repo root (capybara).
+for path in (str(REPO_ROOT), str(PROCAP_DIR), str(SCRIPT_DIR)):
+    if path in sys.path:
+        sys.path.remove(path)
+    sys.path.insert(0, path)
+
+from capybara import load_config  # noqa: F401  (kept for parity / model_cfg validation)
+from data import ProSeqDataModule
+from proseq_file_config import ProSeqFilesConfig
+from procapnet import build_procapnet_model
+import train_utils  # reused from examples/procap
+from train_utils import (
+    configure_count_finetune_parameters,
+    fine_tune_timestamp,
+    finetune_count_head,
+    make_count_finetune_params,
+    read_yaml,
+    require_training_dependencies,
+    select_device,
+    train_model,
+    trainable_parameter_count,
+    validate_training_stage,
+    write_yaml,
+)
+
+# PRO-seq signal is fractional, which would trip the integer-count asserts in
+# examples/procap/performance_metrics.py. Force train_utils.validate() to use the
+# relaxed PRO-seq copy (examples/proseq/performance_metrics.py). With proseq first
+# on sys.path train_utils already binds it, but rebind explicitly to be robust.
+import performance_metrics as _proseq_pm
+train_utils.compute_performance_metrics = _proseq_pm.compute_performance_metrics
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train ProCapNet on processed PRO-seq data.")
+    parser.add_argument("--proj_dir", type=Path, required=True, help="Output root; trained models go under <proj_dir>/models/...")
+    parser.add_argument("--params", type=Path, default=REPO_ROOT / "configs" / "proseq_procapnet.yaml")
+    parser.add_argument("--treatment", type=str, default="GSM8306530_0m", help="GEO sample / timepoint, e.g. GSM8306530_0m")
+    parser.add_argument("--fold", type=str, default=None, help="String fold, e.g. fold1; overrides dataset.fold from the config if given.")
+    parser.add_argument("--data_type", type=str, default="proseq")
+    parser.add_argument("--timestamp", type=str, default=None)
+    parser.add_argument("--stage", choices=["train", "finetune", "both"], default="both")
+    parser.add_argument("--device", type=str, default="gpu", help="Device: gpu, cpu, auto, or a torch device string.")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging for this run.")
+    return parser.parse_args()
+
+
+def make_files(args: argparse.Namespace, timestamp: str | None) -> ProSeqFilesConfig:
+    return ProSeqFilesConfig.create(
+        proj_dir=args.proj_dir,
+        treatment=args.treatment,
+        fold=args.fold,
+        model_name="procapnet",
+        data_type=args.data_type,
+        timestamp=timestamp,
+    )
+
+
+def build_datamodule(
+    *,
+    files: ProSeqFilesConfig,
+    params: dict[str, Any],
+    batch_size: int,
+    num_workers: int,
+    verbose: bool,
+) -> ProSeqDataModule:
+    dataset_params = params["dataset"]
+    config_dict = files.as_dict()
+    data_config = {
+        **config_dict,
+        "input_length": int(dataset_params["input_length"]),
+        "output_length": int(dataset_params["output_length"]),
+        "in_window": list(dataset_params["in_window"]),
+        "out_window": list(dataset_params["out_window"]),
+        "max_jitter": int(dataset_params["max_jitter"]),
+        "reverse_complement": bool(dataset_params["reverse_complement"]),
+        "num_outputs": int(params["model"]["n_outputs"]),
+        "random_seed": dataset_params.get("seed"),
+    }
+    return ProSeqDataModule(
+        config=data_config,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        prefetch_factor=params["dataloader"].get("prefetch_factor", 2),
+        pin_memory=bool(params["dataloader"].get("pin_memory", True)),
+        persistent_workers=bool(params["dataloader"].get("persistent_workers", True)),
+        verbose=verbose,
+    )
+
+
+def load_source_model(params: dict[str, Any], files: ProSeqFilesConfig, device: torch.device) -> nn.Module:
+    model = build_procapnet_model(params["model"])
+    checkpoint = torch.load(files.best_checkpoint_path, map_location=device)
+    if "model_state_dict" not in checkpoint:
+        raise KeyError(f"Checkpoint does not contain model_state_dict: {files.best_checkpoint_path}")
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.to(device)
+    return model
+
+
+def run_train_stage(*, args: argparse.Namespace, params: dict[str, Any], device: torch.device) -> ProSeqFilesConfig:
+    files = make_files(args, args.timestamp)
+    files.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    config_dict = files.as_dict()
+    write_yaml(files.params_path, params)
+    write_yaml(files.config_path, config_dict)
+
+    datamodule = build_datamodule(
+        files=files,
+        params=params,
+        batch_size=int(params["train"]["batch_size"]),
+        num_workers=int(params["dataloader"]["num_workers"]),
+        verbose=args.verbose,
+    )
+
+    metadata = {"model_name": "procapnet", "params": params, "file_config": config_dict}
+    print(f"Training ProCapNet (PRO-seq) on {device}; outputs: {files.model_dir}", flush=True)
+    train_model(
+        model=build_procapnet_model(params["model"]),
+        datamodule=datamodule,
+        output_paths=config_dict,
+        params=params,
+        device=device,
+        metadata=metadata,
+    )
+    return files
+
+
+def run_finetune_stage(
+    *,
+    args: argparse.Namespace,
+    requested_params: dict[str, Any],
+    source_files: ProSeqFilesConfig,
+    device: torch.device,
+) -> None:
+    if not source_files.params_path.exists():
+        raise FileNotFoundError(f"Missing saved params: {source_files.params_path}")
+    if not source_files.best_checkpoint_path.exists():
+        raise FileNotFoundError(f"Missing source best checkpoint: {source_files.best_checkpoint_path}")
+
+    source_params = read_yaml(source_files.params_path)
+    tuned_params = make_count_finetune_params(
+        source_params,
+        requested_params.get("fine_tune"),
+        source_files.timestamp,
+        no_wandb=args.no_wandb,
+    )
+    target_files = make_files(args, fine_tune_timestamp(source_files.timestamp))
+    target_files.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    config_dict = target_files.as_dict()
+    write_yaml(target_files.params_path, tuned_params)
+    write_yaml(target_files.config_path, config_dict)
+
+    datamodule = build_datamodule(
+        files=target_files,
+        params=tuned_params,
+        batch_size=int(tuned_params["train"]["batch_size"]),
+        num_workers=int(tuned_params["dataloader"]["num_workers"]),
+        verbose=args.verbose,
+    )
+
+    fine_tune_cfg = tuned_params["fine_tune"]
+    model = load_source_model(source_params, source_files, device)
+    trainable_names = configure_count_finetune_parameters(model, "procapnet", fine_tune_cfg["mode"])
+    trainable_count = trainable_parameter_count(model)
+    alias_message = ""
+    if fine_tune_cfg["mode"] in {"count_head", "final_layer"} and not hasattr(model, "count_head"):
+        alias_message = " (alias for model.linear in ProCapNet)"
+    metadata = {
+        "model_name": "procapnet",
+        "params": tuned_params,
+        "file_config": config_dict,
+        "finetune_count": {
+            "source_model_dir": str(source_files.model_dir),
+            "source_checkpoint_path": str(source_files.best_checkpoint_path),
+            "mode": fine_tune_cfg["mode"],
+            "trainable_names": trainable_names,
+        },
+    }
+    print(f"Source checkpoint: {source_files.best_checkpoint_path}", flush=True)
+    print(f"Fine-tuning mode: {fine_tune_cfg['mode']}{alias_message}; tuned outputs: {target_files.model_dir}", flush=True)
+    print(f"Trainable parameters: {trainable_count}", flush=True)
+    best_metrics = finetune_count_head(
+        model=model,
+        datamodule=datamodule,
+        output_paths=config_dict,
+        params=tuned_params,
+        device=device,
+        metadata=metadata,
+        mode=fine_tune_cfg["mode"],
+    )
+    print(
+        "Best validation checkpoint: "
+        f"epoch={best_metrics['best_epoch']} "
+        f"loss={best_metrics['best_valid_count_loss']:.6f} "
+        f"pearson={best_metrics['valid_count_pearson']:.4f} "
+        f"spearman={best_metrics['valid_count_spearman']:.4f} "
+        f"r2={best_metrics['valid_count_r2']:.4f}",
+        flush=True,
+    )
+
+
+def main() -> None:
+    args = parse_args()
+
+    require_training_dependencies()
+    stage = validate_training_stage(args.stage)
+    if stage == "finetune" and args.timestamp is None:
+        raise ValueError("--timestamp is required when --stage finetune.")
+
+    params = read_yaml(args.params)
+    # Fold precedence: CLI --fold overrides config dataset.fold, which defaults to fold1.
+    if args.fold is None:
+        args.fold = params.get("dataset", {}).get("fold", "fold1")
+    if args.no_wandb:
+        params.setdefault("wandb", {})["enabled"] = False
+
+    device = select_device(args.device)
+    if stage in {"train", "both"}:
+        source_files = run_train_stage(args=args, params=params, device=device)
+    else:
+        source_files = make_files(args, args.timestamp)
+
+    if stage in {"finetune", "both"}:
+        run_finetune_stage(args=args, requested_params=params, source_files=source_files, device=device)
+
+
+if __name__ == "__main__":
+    main()

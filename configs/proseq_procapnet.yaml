@@ -1,0 +1,93 @@
+# ProCapNet config for the PRO-seq / gene-body workflow.
+#
+# Mirrors configs/procapnet_default.yaml (the PRO-cap ProCapNet baseline) but
+# adapts to PRO-seq semantics so ProCapNet is retrained on the SAME data and task
+# as the CAPY proseq model (configs/proseq_default.yaml):
+#   * single-strand prediction        -> model.n_outputs: 1   (PRO-cap uses 2)
+#   * TSS-anchored asymmetric windows  -> dataset.in_window/out_window
+#         input  = [-2000, +4000] relative to the TSS (length 6000)
+#         output = [    0, +2000] relative to the TSS (length 2000)
+#   * no DNase negatives, no unmappability mask
+#
+# Built by examples/procap/procapnet.py::build_procapnet_model (reused read-only)
+# and trained by examples/proseq/train_proseq_procapnet.py. Loss and training loop
+# are the shared examples/procap/train_utils.py.
+
+model:
+  model_type: procapnet     # canonical dilated BPNet-style ProCapNet
+  n_filters: 512
+  n_layers: 8
+  n_outputs: 1              # single strand (gene-body PRO-seq); PRO-cap uses 2
+  trimming: 2000            # = (input_length 6000 - output_length 2000) // 2
+
+dataset:
+  # Which cross-val fold of the FANTOM5 TSS split to train on. Literal file token:
+  # selects ref_all_timepoints_top_count_per_gene_<fold>_{train,val,test}.bed.gz.
+  # Overridable on the CLI via --fold.
+  fold: fold1
+  input_length: 6000
+  output_length: 2000
+  # TSS-anchored window offsets (consumed by examples/proseq/data.py).
+  # 0 == the TSS coordinate from the peak BED; minus-strand loci are
+  # reverse-complemented so these offsets are read 5'->3' along transcription.
+  in_window: [-2000, 4000]
+  out_window: [0, 2000]
+  max_jitter: 500
+  reverse_complement: false
+  use_dnase: false
+  use_unmappability_mask: false
+  seed: null
+
+train:
+  batch_size: 32
+  learning_rate: 0.0005
+  profile_loss_fn: MNLLLoss
+  count_loss_fn: log1pMSELoss
+  counts_weight: 100.0
+  max_epochs: 500
+  validation_iter: null
+  base_trainable: true
+  precision: 32
+
+fine_tune:
+  mode: count_head        # ProCapNet's count head is model.linear (aliased)
+  learning_rate: 5.0e-6
+  max_epochs: 50
+  patience: 10
+  weight_decay: 0.0
+  validation_iter: 300
+  batch_size: 32
+  num_workers: 4
+
+early_stopping:
+  patience: 30
+
+checkpoint:
+  save_top_k: 1
+  filename: "{epoch:02d}-{valid_loss:.2f}"
+
+dataloader:
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  persistent_workers: true
+
+lr_scheduler:
+  scheduler_name: ReduceLROnPlateau
+  scheduler_kwargs:
+    mode: min
+    factor: 0.5
+    patience: 9
+    min_lr: 1.0e-6
+  lr_scheduler_kwargs:
+    monitor: valid_loss
+
+wandb:
+  enabled: true
+  project: capybara-proseq
+  entity:
+  mode: online
+  tags: []
+  group:
+  name:
+  notes:

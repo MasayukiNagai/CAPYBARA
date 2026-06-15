@@ -1,0 +1,129 @@
+# CAPY U-net config for the PRO-seq / gene-body workflow.
+#
+# Benchmark variant of configs/proseq_default.yaml (the Y-net). The ONLY
+# difference is the count head:
+#   * Y-net (proseq_default): count branches from the bottleneck (YCountHead,
+#       conv + adaptive_avg_pool).
+#   * U-net (this file): count is read from the shared decoder output
+#       (UCountHead, conv + global avg pool) — count_head.source: decoder makes
+#       config.py infer count_head.type: unet.
+# Count-head capacity is kept identical (conv [128,64] + MLP [64], kernel 5) so
+# the only variable is the count-head topology (where count is predicted from).
+# Everything else — single-strand profile, 6000/2000 TSS-anchored windows,
+# encoder/decoder/bottleneck, data, and training recipe — is identical to
+# proseq_default.yaml.
+
+model:
+  input_channels: 4
+  input_length: 6000      # = len(in_window) = 4000 - (-2000)
+  output_length: 2000     # = len(out_window) = 2000 - 0
+  dna_embedder_channels: 64
+  num_groups: 8
+  encoder_channels: [128, 192, 256]
+  pool_size: 2
+  decoder_channels: [256, 192, 128, 128]
+  output_embedder_channels: 128
+  embedding_projector:
+    enabled: true
+  norm_type: batch
+  activation: gelu
+  dropout: 0.1
+
+  profile_head:
+    source: decoder
+    num_outputs: 1        # single strand (PRO-seq, strand-oriented)
+    kernel_size: 75
+
+  count_head:
+    source: decoder       # -> count_head.type inferred as `unet` (UCountHead)
+    conv_hidden_dims: [128, 64]
+    mlp_hidden_dims: [64]
+    kernel_size: 5
+    global_pool: avg      # UCountHead global pooling (replaces adaptive pooling)
+    dropout: 0.1
+    norm_type: batch
+    mlp_norm_type: layer
+
+  bottleneck:
+    type: hybrid_attention
+    depth: 2
+    kernel_size: 5
+    dropout: 0.1
+    norm_type: batch
+    activation: gelu
+    num_heads: 4
+    attn_dropout: 0.1
+    mlp_ratio: 2.0
+
+dataset:
+  # Which cross-val fold of the FANTOM5 TSS split to train on. Literal file token:
+  # selects ref_all_timepoints_top_count_per_gene_<fold>_{train,val,test}.bed.gz.
+  # Overridable on the CLI via --fold.
+  fold: fold1
+  input_length: 6000
+  output_length: 2000
+  # TSS-anchored window offsets (consumed by examples/proseq/data.py).
+  # 0 == the TSS coordinate from the peak BED; minus-strand loci are
+  # reverse-complemented so these offsets are read 5'->3' along transcription.
+  in_window: [-2000, 4000]
+  out_window: [0, 2000]
+  max_jitter: 500
+  reverse_complement: false
+  use_dnase: false
+  use_unmappability_mask: false
+  seed: null
+
+train:
+  batch_size: 32
+  learning_rate: 0.0005
+  profile_loss_fn: MNLLLoss
+  count_loss_fn: log1pMSELoss
+  counts_weight: 100.0
+  max_epochs: 500
+  validation_iter: null
+  base_trainable: true
+  precision: 32
+
+fine_tune:
+  mode: final_layer
+  learning_rate: 5.0e-6
+  max_epochs: 50
+  patience: 10
+  weight_decay: 0.0
+  validation_iter: 300
+  batch_size: 32
+  num_workers: 4
+
+early_stopping:
+  patience: 30
+
+checkpoint:
+  save_top_k: 1
+  filename: "{epoch:02d}-{valid_loss:.2f}"
+
+dataloader:
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  persistent_workers: true
+
+lr_scheduler:
+  scheduler_name: ReduceLROnPlateau
+  scheduler_kwargs:
+    mode: min
+    factor: 0.5
+    patience: 9
+    min_lr: 1.0e-6
+  lr_scheduler_kwargs:
+    monitor: valid_loss
+
+wandb:
+  enabled: true
+  project: capybara-proseq
+  entity:
+  mode: online
+  tags:
+    - unet
+  group:
+  name:
+  notes:
