@@ -1,15 +1,5 @@
-# CAPY config for the PRO-seq / gene-body workflow.
-#
-# Mirrors configs/procap_default.yaml but adapts to PRO-seq semantics used by the
-# ProCapNet ag_mini setup:
-#   * single-strand prediction        -> model.profile_head.num_outputs: 1
-#   * TSS-anchored asymmetric windows  -> dataset.in_window/out_window (NOT centered)
-#         input  = [-2000, +4000] relative to the TSS (length 6000)
-#         output = [    0, +2000] relative to the TSS (length 2000)
-#   * no DNase negatives, no unmappability mask
-#
-# Loss and training loop are reused unchanged from examples/procap (capybara.losses
-# + examples/procap/train_utils.py); only the data path differs.
+# CAPY (Y-net) default config for PRO-seq: single-strand, asymmetric
+# (non TSS-symmetric) input/output windows, no reverse-complement augmentation.
 
 model:
   input_channels: 4
@@ -35,19 +25,19 @@ model:
   count_head:
     type: ynet
     source: bottleneck
-    conv_hidden_dims: [128, 64]
-    mlp_hidden_dims: [64]
-    kernel_size: 5
+    conv_hidden_dims: [64, 32]
+    mlp_hidden_dims: [32]
+    kernel_size: 11
     pool_size: 2
     adaptive_pool_size: 4
-    dropout: 0.1
+    dropout: 0.3
     norm_type: batch
     mlp_norm_type: layer
 
   bottleneck:
     type: hybrid_attention
     depth: 2
-    kernel_size: 5
+    kernel_size: 9
     dropout: 0.1
     norm_type: batch
     activation: gelu

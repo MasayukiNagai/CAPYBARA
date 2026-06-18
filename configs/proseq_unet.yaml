@@ -1,17 +1,9 @@
-# CAPY U-net config for the PRO-seq / gene-body workflow.
+# CAPY U-net config for PRO-seq: single-strand, asymmetric (non TSS-symmetric)
+# input/output windows, no reverse-complement augmentation.
 #
-# Benchmark variant of configs/proseq_default.yaml (the Y-net). The ONLY
-# difference is the count head:
-#   * Y-net (proseq_default): count branches from the bottleneck (YCountHead,
-#       conv + adaptive_avg_pool).
-#   * U-net (this file): count is read from the shared decoder output
-#       (UCountHead, conv + global avg pool) — count_head.source: decoder makes
-#       config.py infer count_head.type: unet.
-# Count-head capacity is kept identical (conv [128,64] + MLP [64], kernel 5) so
-# the only variable is the count-head topology (where count is predicted from).
-# Everything else — single-strand profile, 6000/2000 TSS-anchored windows,
-# encoder/decoder/bottleneck, data, and training recipe — is identical to
-# proseq_default.yaml.
+# Same as proseq_default.yaml except the count head reads from the shared decoder
+# output (UCountHead, global avg pool) instead of the bottleneck (YCountHead).
+# count_head.source: decoder makes config.py infer count_head.type: unet.
 
 model:
   input_channels: 4
@@ -36,18 +28,18 @@ model:
 
   count_head:
     source: decoder       # -> count_head.type inferred as `unet` (UCountHead)
-    conv_hidden_dims: [128, 64]
-    mlp_hidden_dims: [64]
-    kernel_size: 5
+    conv_hidden_dims: [64, 32]
+    mlp_hidden_dims: [32]
+    kernel_size: 11
     global_pool: avg      # UCountHead global pooling (replaces adaptive pooling)
-    dropout: 0.1
+    dropout: 0.3
     norm_type: batch
     mlp_norm_type: layer
 
   bottleneck:
     type: hybrid_attention
     depth: 2
-    kernel_size: 5
+    kernel_size: 9
     dropout: 0.1
     norm_type: batch
     activation: gelu

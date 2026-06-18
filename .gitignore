@@ -231,4 +231,11 @@ cl_procap
 data
 results/
 ProCapNet/
+examples/proseq/search_fold1/
+examples/proseq/search_fold1_chead/
+examples/proseq/search_fold1_capacity/
+configs/proseq_search/
+configs/proseq_chead_search/
+configs/proseq_capacity_search/
+configs/proseq_old_default/
 
