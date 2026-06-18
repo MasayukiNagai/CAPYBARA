@@ -19,6 +19,7 @@
 #   sbatch examples/proseq/run_evaluate_proseq.sh <model_name> <timestamp> \
 #       [treatment] [fold] [split] [gpu] [reverse_complement]
 # model_name: capy | procapnet ; reverse_complement: 1 (on) or 0 (off).
+# split: train|val|test (positives) or neg_train|neg_val|neg_test (negatives).
 # PROSEQ_PROJ_DIR can override the output/model root.
 
 set -euo pipefail

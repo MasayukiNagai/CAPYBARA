@@ -32,6 +32,15 @@ DEFAULT_PEAK_DIR = (
 # Peak BED naming: ref_all_timepoints_top_count_per_gene_{fold}_{split}.bed.gz
 PEAK_PREFIX = "ref_all_timepoints_top_count_per_gene"
 
+# Negative-region BEDs (PRO-seq analogue of procap's DNase negatives). Same per-fold
+# split layout as the positive peaks:
+# rogers_negative_samples_{fold}_{split}.bed.gz
+DEFAULT_NEG_DIR = (
+    "/grid/koo/home/ykang/elongation/ProCapNet/Rogers_negative_samples/"
+    "split_ref_condition_negative_samples"
+)
+NEG_PREFIX = "rogers_negative_samples"
+
 
 @dataclass(frozen=True)
 class ProSeqFilesConfig:
@@ -45,6 +54,8 @@ class ProSeqFilesConfig:
     chrom_size_path: Path
     bigwig_dir: Path
     peak_dir: Path
+    neg_dir: Path
+    require_negatives: bool
 
     @classmethod
     def create(
@@ -60,6 +71,8 @@ class ProSeqFilesConfig:
         chrom_size_path: str | Path = DEFAULT_CHROM_SIZE_PATH,
         bigwig_dir: str | Path = DEFAULT_BIGWIG_DIR,
         peak_dir: str | Path = DEFAULT_PEAK_DIR,
+        neg_dir: str | Path = DEFAULT_NEG_DIR,
+        require_negatives: bool = False,
     ) -> "ProSeqFilesConfig":
         timestamp = timestamp or datetime.now().strftime("%y%m%d_%H%M%S")
         cfg = cls(
@@ -73,6 +86,8 @@ class ProSeqFilesConfig:
             chrom_size_path=Path(chrom_size_path),
             bigwig_dir=Path(bigwig_dir),
             peak_dir=Path(peak_dir),
+            neg_dir=Path(neg_dir),
+            require_negatives=bool(require_negatives),
         )
         cfg.validate()
         return cfg
@@ -97,6 +112,19 @@ class ProSeqFilesConfig:
     @property
     def test_peak_path(self) -> Path:
         return self.peak_dir / f"{PEAK_PREFIX}_{self.fold}_test.bed.gz"
+
+    # --- negatives ---
+    @property
+    def neg_train_path(self) -> Path:
+        return self.neg_dir / f"{NEG_PREFIX}_{self.fold}_train.bed.gz"
+
+    @property
+    def neg_val_path(self) -> Path:
+        return self.neg_dir / f"{NEG_PREFIX}_{self.fold}_val.bed.gz"
+
+    @property
+    def neg_test_path(self) -> Path:
+        return self.neg_dir / f"{NEG_PREFIX}_{self.fold}_test.bed.gz"
 
     # --- outputs ---
     @property
@@ -143,6 +171,8 @@ class ProSeqFilesConfig:
             self.train_peak_path,
             self.val_peak_path,
         ]
+        if self.require_negatives:
+            required += [self.neg_train_path, self.neg_val_path, self.neg_test_path]
         missing = [str(path) for path in required if not path.exists()]
         if missing:
             joined = "\n  ".join(missing)
@@ -167,6 +197,9 @@ class ProSeqFilesConfig:
             "train_peak_path": str(self.train_peak_path),
             "val_peak_path": str(self.val_peak_path),
             "test_peak_path": str(self.test_peak_path),
+            "neg_train_path": str(self.neg_train_path),
+            "neg_val_path": str(self.neg_val_path),
+            "neg_test_path": str(self.neg_test_path),
             "model_dir": str(self.model_dir),
             "checkpoint_dir": str(self.checkpoint_dir),
             "best_checkpoint_path": str(self.best_checkpoint_path),

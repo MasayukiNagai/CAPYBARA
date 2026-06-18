@@ -30,7 +30,7 @@ from typing import Iterable
 import numpy as np
 import torch
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset, Sampler
 
 
 def one_hot_encode(sequence: str, dtype: np.dtype = np.float32) -> np.ndarray:
@@ -299,16 +299,71 @@ class ProfileDataset(Dataset):
         return {"x": x.to(torch.float32), "y": y.to(torch.float32)}
 
 
+class MultiSourceBatchSampler(Sampler[list[int]]):
+    """Yield batches mixing several datasets at fixed per-batch fractions.
+
+    Ported verbatim from ``examples/procap/data.py``. The first source (positives)
+    is the "primary": it is iterated by a ``randperm`` so each item is seen ~once per
+    epoch, and the epoch length is ``len(primary) // batch_sizes[0]``. The remaining
+    sources (negatives) are sampled *with replacement* via ``torch.randint`` to fill
+    their per-batch slots, so they need not match the primary in count.
+    """
+
+    def __init__(self, dataset_lengths: list[int], source_fracs: list[float], batch_size: int, seed: int | None = None) -> None:
+        if len(dataset_lengths) != len(source_fracs):
+            raise ValueError("dataset_lengths and source_fracs must have the same length.")
+        if abs(sum(source_fracs) - 1.0) > 1e-6:
+            raise ValueError(f"source_fracs must sum to 1, got {sum(source_fracs)}.")
+        self.dataset_lengths = [int(length) for length in dataset_lengths]
+        self.source_fracs = [float(frac) for frac in source_fracs]
+        self.batch_size = int(batch_size)
+        self.generator = torch.Generator()
+        if seed is not None:
+            self.generator.manual_seed(int(seed))
+
+        self.batch_sizes = [int(torch.ceil(torch.tensor(self.batch_size * frac)).item()) for frac in self.source_fracs]
+        overflow = sum(self.batch_sizes) - self.batch_size
+        self.batch_sizes[0] -= overflow
+        if self.batch_sizes[0] < 1:
+            raise ValueError(f"Primary source batch size must be at least 1, got {self.batch_sizes[0]}.")
+
+        self.offsets = [0]
+        for length in self.dataset_lengths[:-1]:
+            self.offsets.append(self.offsets[-1] + length)
+        self.num_batches = self.dataset_lengths[0] // self.batch_sizes[0]
+
+    def __len__(self) -> int:
+        return self.num_batches
+
+    def __iter__(self):
+        primary = torch.randperm(self.dataset_lengths[0], generator=self.generator)
+        primary = primary[: self.num_batches * self.batch_sizes[0]].view(self.num_batches, self.batch_sizes[0])
+
+        for batch_idx in range(self.num_batches):
+            parts = [primary[batch_idx]]
+            for source_idx in range(1, len(self.dataset_lengths)):
+                start = self.offsets[source_idx]
+                end = start + self.dataset_lengths[source_idx]
+                count = self.batch_sizes[source_idx]
+                parts.append(torch.randint(start, end, (count,), generator=self.generator))
+            batch = torch.cat(parts)
+            yield batch[torch.randperm(batch.numel(), generator=self.generator)].tolist()
+
+
 class ProSeqDataModule:
-    """Single-source PRO-seq data module (no DNase negatives, no mask).
+    """PRO-seq data module with optional negative-region mixing (no mask).
 
     Public interface matches ``examples/procap/data.py::ProCapDataModule`` so
     ``examples/procap/train_utils.run_training_loop`` consumes it unchanged.
 
+    When ``use_negatives`` is set, negative-region loci (``neg_train_path``) are mixed
+    into each *training* batch at ``source_fracs`` via ``MultiSourceBatchSampler``,
+    mirroring procap's DNase-negative handling. Validation stays positives-only.
+
     Expected ``config`` keys: genome_path, chrom_size_path, plus_bw_path,
     minus_bw_path, train_peak_path, val_peak_path, input_length, output_length,
     in_window, out_window, max_jitter, reverse_complement, random_seed,
-    num_outputs.
+    num_outputs. Optional: use_negatives, source_fracs, neg_train_path.
     """
 
     def __init__(
@@ -335,12 +390,21 @@ class ProSeqDataModule:
         self.valid_dataset = None
 
     def setup(self) -> None:
-        self.train_dataset = self._make_dataset(
-            self.config["train_peak_path"], jitter=True, reverse_complement=bool(self.config["reverse_complement"])
-        )
+        self.train_dataset = self._make_train_dataset()
         self.valid_dataset = self._make_dataset(
             self.config["val_peak_path"], jitter=False, reverse_complement=False
         )
+
+    def _make_train_dataset(self):
+        peak_dataset = self._make_dataset(
+            self.config["train_peak_path"], jitter=True, reverse_complement=bool(self.config["reverse_complement"])
+        )
+        if not self.config.get("use_negatives"):
+            return peak_dataset
+        neg_dataset = self._make_dataset(
+            self.config["neg_train_path"], jitter=True, reverse_complement=bool(self.config["reverse_complement"])
+        )
+        return [peak_dataset, neg_dataset]
 
     def _make_dataset(self, bed_path: str, *, jitter: bool, reverse_complement: bool) -> ProfileDataset:
         max_jitter = int(self.config["max_jitter"]) if jitter else 0
@@ -387,6 +451,16 @@ class ProSeqDataModule:
             kwargs["persistent_workers"] = self.persistent_workers
             if self.prefetch_factor is not None:
                 kwargs["prefetch_factor"] = int(self.prefetch_factor)
+
+        if isinstance(dataset, list):
+            sampler = MultiSourceBatchSampler(
+                dataset_lengths=[len(ds) for ds in dataset],
+                source_fracs=list(self.config["source_fracs"]),
+                batch_size=self.batch_size,
+                seed=self.config.get("random_seed"),
+            )
+            return DataLoader(ConcatDataset(dataset), batch_sampler=sampler, **kwargs)
+
         return DataLoader(
             dataset, batch_size=self.batch_size, shuffle=shuffle, drop_last=drop_last, **kwargs
         )

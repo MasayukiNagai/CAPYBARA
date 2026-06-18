@@ -70,7 +70,7 @@ SUMMARY_METRIC_COLUMNS = [
     "count_mse",
     "count_r2",
 ]
-SPLITS = ["train", "val", "test"]
+SPLITS = ["train", "val", "test", "neg_train", "neg_val", "neg_test"]
 
 
 def json_default(value: Any) -> Any:
@@ -106,6 +106,12 @@ def split_peak_path(files: ProSeqFilesConfig, split: str) -> Path:
         return files.val_peak_path
     if split == "test":
         return files.test_peak_path
+    if split == "neg_train":
+        return files.neg_train_path
+    if split == "neg_val":
+        return files.neg_val_path
+    if split == "neg_test":
+        return files.neg_test_path
     raise ValueError(f"Unsupported split: {split}")
 
 

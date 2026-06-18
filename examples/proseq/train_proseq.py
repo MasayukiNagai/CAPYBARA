@@ -72,7 +72,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def make_files(args: argparse.Namespace, timestamp: str | None) -> ProSeqFilesConfig:
+def make_files(
+    args: argparse.Namespace, timestamp: str | None, *, require_negatives: bool = False
+) -> ProSeqFilesConfig:
     return ProSeqFilesConfig.create(
         proj_dir=args.proj_dir,
         treatment=args.treatment,
@@ -80,6 +82,7 @@ def make_files(args: argparse.Namespace, timestamp: str | None) -> ProSeqFilesCo
         model_name="capy",
         data_type=args.data_type,
         timestamp=timestamp,
+        require_negatives=require_negatives,
     )
 
 
@@ -102,6 +105,8 @@ def build_datamodule(
         "out_window": list(dataset_params["out_window"]),
         "max_jitter": int(dataset_params["max_jitter"]),
         "reverse_complement": bool(dataset_params["reverse_complement"]),
+        "use_negatives": bool(dataset_params.get("use_negatives", False)),
+        "source_fracs": list(dataset_params.get("source_fracs", [0.875, 0.125])),
         "num_outputs": int(model_cfg["model"]["profile_head"]["num_outputs"]),
         "random_seed": dataset_params.get("seed"),
     }
@@ -128,7 +133,9 @@ def load_source_model(files: ProSeqFilesConfig, device: torch.device) -> nn.Modu
 
 def run_train_stage(*, args: argparse.Namespace, params: dict[str, Any], device: torch.device) -> ProSeqFilesConfig:
     model_cfg = load_config(args.params)
-    files = make_files(args, args.timestamp)
+    files = make_files(
+        args, args.timestamp, require_negatives=bool(params["dataset"].get("use_negatives", False))
+    )
     files.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config_dict = files.as_dict()
     write_yaml(files.params_path, params)
@@ -178,7 +185,11 @@ def run_finetune_stage(
         no_wandb=args.no_wandb,
     )
     model_cfg = load_config(source_files.params_path)
-    target_files = make_files(args, fine_tune_timestamp(source_files.timestamp))
+    target_files = make_files(
+        args,
+        fine_tune_timestamp(source_files.timestamp),
+        require_negatives=bool(tuned_params.get("dataset", {}).get("use_negatives", False)),
+    )
     target_files.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     config_dict = target_files.as_dict()
     write_yaml(target_files.params_path, tuned_params)
