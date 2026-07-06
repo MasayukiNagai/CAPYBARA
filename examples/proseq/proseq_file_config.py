@@ -25,20 +25,25 @@ from pathlib import Path
 DEFAULT_GENOME_PATH = "/grid/koo/home/ykang/elongation/reference/samtools/GRCh38.p13.genome.fa"
 DEFAULT_CHROM_SIZE_PATH = "/grid/koo/home/ykang/elongation/reference/samtools/GRCh38.p13.genome.chrominfo.txt"
 DEFAULT_BIGWIG_DIR = "/grid/koo/home/ykang/elongation/data_hunting/rogers_timecourse_data"
+# QC over_10: split_FANTOM5_TSS_rogers_all_times_QCtest_over_10_top_counts_per_gene
 DEFAULT_PEAK_DIR = (
     "/grid/koo/home/ykang/elongation/data_hunting/"
     "split_FANTOM5_TSS_rogers_all_times_top_counts_per_gene"
 )
-# Peak BED naming: ref_all_timepoints_top_count_per_gene_{fold}_{split}.bed.gz
+# Peak BED naming: {PEAK_PREFIX}_{fold}_{split}.bed.gz
+# QC over_10: ref_all_timepoints_over_10_top_count_per_gene
 PEAK_PREFIX = "ref_all_timepoints_top_count_per_gene"
 
 # Negative-region BEDs (PRO-seq analogue of procap's DNase negatives). Same per-fold
 # split layout as the positive peaks:
 # rogers_negative_samples_{fold}_{split}.bed.gz
+# QC over_10: split_ref_condition_negative_samples_tss_over10
 DEFAULT_NEG_DIR = (
     "/grid/koo/home/ykang/elongation/ProCapNet/Rogers_negative_samples/"
     "split_ref_condition_negative_samples"
 )
+# Negative BED naming: {NEG_PREFIX}_{fold}_{split}.bed.gz
+# QC over_10: rogers_negative_samples_tss_over10
 NEG_PREFIX = "rogers_negative_samples"
 
 

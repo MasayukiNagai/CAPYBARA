@@ -239,3 +239,5 @@ configs/proseq_chead_search/
 configs/proseq_capacity_search/
 configs/proseq_old_default/
 examples/proseq/array_run/
+examples/proseq/frac_search_fold1/
+examples/proseq/frac_search_fold1_qc10/

@@ -61,12 +61,12 @@ dataset:
   reverse_complement: false
   # Mix in negative (non-TSS) regions during training, like procap's DNase negatives.
   use_negatives: true
-  source_fracs: [0.875, 0.125]   # per-batch [positive, negative]
+  source_fracs: [0.95, 0.05]   # per-batch [positive, negative]
   use_unmappability_mask: false
   seed: null
 
 train:
-  batch_size: 32
+  batch_size: 64
   learning_rate: 0.0005
   profile_loss_fn: MNLLLoss
   count_loss_fn: log1pMSELoss
@@ -83,7 +83,7 @@ fine_tune:
   patience: 10
   weight_decay: 0.0
   validation_iter: 300
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
 
 early_stopping:
@@ -111,7 +111,7 @@ lr_scheduler:
 
 wandb:
   enabled: true
-  project: capybara-proseq-v1
+  project: capybara-proseq-include-negatives-v1
   entity:
   mode: online
   tags: []
