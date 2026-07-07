@@ -235,14 +235,3 @@ ProCapNet/
 context/
 chrombpnet/
 chrombpnet_data
-
-configs/proseq_capacity_search/
-configs/proseq_chead_search/
-configs/proseq_old_default/
-configs/proseq_search/
-examples/proseq/array_run/
-examples/proseq/frac_search_fold1/
-examples/proseq/frac_search_fold1_qc10/
-examples/proseq/search_fold1/
-examples/proseq/search_fold1_capacity/
-examples/proseq/search_fold1_chead/

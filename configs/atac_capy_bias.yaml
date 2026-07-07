@@ -1,0 +1,72 @@
+# CAPY bias model — small, constrained-RF analog of ChromBPNet's 128/4 bias net.
+# Trained on non-peaks only (Tn5 sequence bias). counts_weight is overridden
+# per fold from the shared bias_model_params.tsv at runtime.
+model:
+  input_channels: 4
+  input_length: 2114
+  output_length: 1000
+  dna_embedder_channels: 32
+  num_groups: 8
+  encoder_channels: [48, 64]
+  pool_size: 2
+  decoder_channels: [64, 48, 32]
+  output_embedder_channels: 32
+  embedding_projector:
+    enabled: false
+  norm_type: batch
+  activation: gelu
+  dropout: 0.1
+
+  profile_head:
+    source: decoder
+    num_outputs: 1      # unstranded ATAC-seq
+    kernel_size: 75
+
+  count_head:
+    type: ynet
+    source: bottleneck
+    conv_hidden_dims: [32]
+    mlp_hidden_dims: [32]
+    kernel_size: 5
+    pool_size: 2
+    adaptive_pool_size: 4
+    dropout: 0.1
+    norm_type: batch
+    mlp_norm_type: layer
+
+  bottleneck:
+    type: residual_conv   # local (no attention) -> keeps receptive field small
+    depth: 1
+    kernel_size: 5
+    dropout: 0.1
+    norm_type: batch
+    activation: gelu
+
+
+dataset:
+  input_length: 2114
+  output_length: 1000
+  max_jitter: 0
+  reverse_complement: true
+  seed: null
+
+train:
+  batch_size: 64
+  learning_rate: 0.001
+  counts_weight: 5.8
+  max_epochs: 50
+  validation_iter: null
+  precision: 32
+
+early_stopping:
+  patience: 5
+
+dataloader:
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  persistent_workers: true
+
+wandb:
+  enabled: true
+  project: capybara-atac-bias
