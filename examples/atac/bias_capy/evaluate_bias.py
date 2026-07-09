@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.spatial.distance import jensenshannon
 from torch.utils.data import DataLoader
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -86,19 +87,58 @@ def load_region_set(
     return run_model(model, loader, device, reverse_complement=reverse_complement)
 
 
+def chrombpnet_profile_jsd(
+    true_profiles: np.ndarray,
+    pred_log_profiles: np.ndarray,
+    pseudocount: float = 1e-3,
+) -> tuple[float, float]:
+    """Profile JSD exactly as ChromBPNet's ``training/metrics.py:profile_metrics``.
+
+    Per region: JS *distance* (``scipy.spatial.distance.jensenshannon``, √divergence,
+    natural-log base) between the observed profile and the predicted softmax profile,
+    plus a min-max normalization against a *uniform* profile baseline
+    (``norm = clip(1 - jsd/jsd(true, uniform), 0, 1)``, higher=better). Returns the
+    median over regions of each (``median_jsd``, ``median_norm_jsd``); regions with
+    zero observed counts contribute NaN and drop out of the median.
+    """
+    true = np.asarray(true_profiles)
+    pred = np.exp(np.asarray(pred_log_profiles))
+    if true.ndim == 3:  # (N, 1, L) single ATAC task -> (N, L)
+        true = true[:, 0, :]
+        pred = pred[:, 0, :]
+    n_regions, length = true.shape
+    uniform = np.full(length, 1.0 / length)
+    jsds = np.full(n_regions, np.nan)
+    norms = np.full(n_regions, np.nan)
+    for i in range(n_regions):
+        total = np.nansum(true[i])
+        if total <= 0:
+            continue
+        true_prob = true[i] / (pseudocount + total)
+        cur_jsd = jensenshannon(true_prob, pred[i])  # base e (default), = √divergence
+        max_jsd = jensenshannon(true_prob, uniform)  # worst case; min_jsd = 0
+        jsds[i] = cur_jsd
+        if max_jsd > 0:
+            norms[i] = np.clip((cur_jsd - max_jsd) / (0.0 - max_jsd), 0.0, 1.0)
+    median_jsd = float(np.nanmedian(jsds)) if np.any(np.isfinite(jsds)) else float("nan")
+    median_norm_jsd = float(np.nanmedian(norms)) if np.any(np.isfinite(norms)) else float("nan")
+    return median_jsd, median_norm_jsd
+
+
 def summarize(results: dict[str, np.ndarray]) -> dict[str, float]:
     metrics = compute_standard_metrics(
         results["true_profiles"], results["pred_log_profiles"], results["pred_log_counts"]
     )
-    true_counts = results["true_profiles"].sum(axis=(1, 2))
-    valid = true_counts > 0
-    jsd = np.ravel(metrics["jsd"])
+    median_jsd, median_norm_jsd = chrombpnet_profile_jsd(
+        results["true_profiles"], results["pred_log_profiles"]
+    )
     return {
         "n": int(results["true_profiles"].shape[0]),
         "counts_pearsonr": finite_mean(metrics["count_pearson"]),
         "counts_spearmanr": finite_mean(metrics["count_spearman"]),
         "counts_mse": finite_mean(metrics["count_mse"]),
-        "median_jsd": float(np.nanmedian(jsd[valid])) if np.any(valid) else float("nan"),
+        "median_jsd": median_jsd,
+        "median_norm_jsd": median_norm_jsd,
     }
 
 
@@ -161,7 +201,10 @@ def run(args: argparse.Namespace) -> None:
             }
             for name, stats in per_set.items()
         },
-        "profile_metrics": {name: {"median_jsd": stats["median_jsd"]} for name, stats in per_set.items()},
+        "profile_metrics": {
+            name: {"median_jsd": stats["median_jsd"], "median_norm_jsd": stats["median_norm_jsd"]}
+            for name, stats in per_set.items()
+        },
         "n_regions": {name: stats["n"] for name, stats in per_set.items()},
         "split": args.split,
         "reverse_complement": bool(args.reverse_complement),
@@ -175,16 +218,27 @@ def run(args: argparse.Namespace) -> None:
 
     peak_pearson = per_set["peaks"]["counts_pearsonr"]
     nonpeak_pearson = per_set["nonpeaks"]["counts_pearsonr"]
-    print("\n=== CAPY bias model — Tier-A metrics ===", flush=True)
-    print(f"  nonpeaks: counts pearson={nonpeak_pearson:.4f}  median_jsd={per_set['nonpeaks']['median_jsd']:.4f}", flush=True)
-    print(f"  peaks:    counts pearson={peak_pearson:.4f}  median_jsd={per_set['peaks']['median_jsd']:.4f}", flush=True)
+    print("\n=== CAPY bias model — Tier-A metrics (ChromBPNet-comparable) ===", flush=True)
+    for name in ("nonpeaks", "peaks", "peaks_and_nonpeaks"):
+        s = per_set[name]
+        print(
+            f"  {name:>18}: counts pearson={s['counts_pearsonr']:.4f} spearman={s['counts_spearmanr']:.4f} "
+            f"mse={s['counts_mse']:.4f} | median_jsd={s['median_jsd']:.4f} median_norm_jsd={s['median_norm_jsd']:.4f}",
+            flush=True,
+        )
     print(f"  wrote {out_path}", flush=True)
 
     if files.ref_metrics_path.exists():
         ref = json.loads(files.ref_metrics_path.read_text())
-        ref_peak = ref.get("counts_metrics", {}).get("peaks", {}).get("pearsonr")
-        ref_nonpeak = ref.get("counts_metrics", {}).get("nonpeaks", {}).get("pearsonr")
-        print(f"  ChromBPNet ref: peaks pearson={ref_peak}  nonpeaks pearson={ref_nonpeak}", flush=True)
+        print("  --- ChromBPNet reference (same fold, same regions) ---", flush=True)
+        for name in ("nonpeaks", "peaks", "peaks_and_nonpeaks"):
+            rc = ref.get("counts_metrics", {}).get(name, {})
+            rp = ref.get("profile_metrics", {}).get(name, {})
+            print(
+                f"  {name:>18}: counts pearson={rc.get('pearsonr')} spearman={rc.get('spearmanr')} "
+                f"mse={rc.get('mse')} | median_jsd={rp.get('median_jsd')} median_norm_jsd={rp.get('median_norm_jsd')}",
+                flush=True,
+            )
 
     # QC gate (mirror ChromBPNet's assertion before full-model training).
     if peak_pearson <= PEAK_PEARSON_QC_FLOOR:
