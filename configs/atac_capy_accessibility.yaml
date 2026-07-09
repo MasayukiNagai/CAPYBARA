@@ -1,0 +1,85 @@
+# CAPY accessibility model (Stage 2) — full CAPY backbone, bias-factorized.
+# Composed with a frozen, depth-scaled CAPY bias model at train/eval time.
+# Data params (counts_weight, jitter, neg ratio) are ChromBPNet-fixed; counts_weight
+# is overridden per fold from the shared chrombpnet_model_params.tsv at runtime.
+model:
+  input_channels: 4
+  input_length: 2114
+  output_length: 1000
+  dna_embedder_channels: 64
+  num_groups: 8
+  encoder_channels: [128, 192, 256]
+  pool_size: 2
+  decoder_channels: [256, 192, 128, 128]
+  output_embedder_channels: 128
+  embedding_projector:
+    enabled: true
+  norm_type: batch
+  activation: gelu
+  dropout: 0.1
+
+  profile_head:
+    source: decoder
+    num_outputs: 1      # unstranded ATAC-seq
+    kernel_size: 75
+
+  count_head:
+    type: ynet
+    source: bottleneck
+    conv_hidden_dims: [128, 64]
+    mlp_hidden_dims: [64]
+    kernel_size: 5
+    pool_size: 2
+    adaptive_pool_size: 4
+    dropout: 0.1
+    norm_type: batch
+    mlp_norm_type: layer
+
+  bottleneck:
+    type: hybrid_attention
+    depth: 2
+    kernel_size: 5
+    dropout: 0.1
+    norm_type: batch
+    activation: gelu
+    num_heads: 4
+    attn_dropout: 0.1
+    mlp_ratio: 2.0
+
+
+dataset:
+  input_length: 2114
+  output_length: 1000
+  max_jitter: 500
+  reverse_complement: true
+  negative_sampling_ratio: 0.1
+  seed: 1234
+
+train:
+  batch_size: 64
+  learning_rate: 0.001
+  counts_weight: 76.0      # overridden per fold from chrombpnet_model_params.tsv
+  max_epochs: 100
+  validation_iter: null
+  precision: 32
+
+early_stopping:
+  patience: 10
+
+dataloader:
+  num_workers: 4
+  prefetch_factor: 2
+  pin_memory: true
+  persistent_workers: true
+
+lr_scheduler:
+  scheduler_name: ReduceLROnPlateau
+  scheduler_kwargs:
+    mode: min
+    factor: 0.5
+    patience: 9
+    min_lr: 1.0e-6
+
+wandb:
+  enabled: true
+  project: capybara-atac-chrombpnet
