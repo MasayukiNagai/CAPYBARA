@@ -264,13 +264,24 @@ QC assertion.
       (N,4,L)); then the container's `modisco motifs -n 50000 -w 500` / `modisco
       report` run **unchanged** (model-agnostic) to confirm the CAPY bias model
       learned only Tn5 motifs. **Engine (`--method`, default `gradientshap`):**
-      GradientShap (`captum`) is the default because DeepLIFT showed high
-      convergence deltas (~1–4) on CAPY's pooling U-Net; DeepLIFT/DeepSHAP via
-      `tangermeme.deep_lift_shap` stays available (`--method deeplift`) for the
-      closest-to-ChromBPNet comparison (the bias net's local `residual_conv`
-      bottleneck is DeepLIFT-clean). Outputs namespaced under
-      `attribution/<method>/`. See `examples/atac/attribution/`
-      (`attribution_bias.py`, `run_modisco.sh`, `submit_attribution_bias.sh`).
+      GradientShap (`captum`) is the default; DeepLIFT/DeepSHAP via
+      `tangermeme.deep_lift_shap` (`--method deeplift`) is the closest-to-ChromBPNet
+      comparison (same estimator: Rescale rule averaged over 20 dinuc-shuffled refs =
+      ChromBPNet's `TFDeepExplainer`). Outputs namespaced under `attribution/<method>/`.
+      See `examples/atac/attribution/` (`attribution_bias.py`, `run_modisco.sh`,
+      `submit_attribution_bias.sh`).
+      **DeepLIFT convergence deltas fixed (`nonlinear_ops.py`):** the earlier high deltas
+      (~1–4) came from CAPY's `SameMaxPool1d`, a custom max-pool class tangermeme could not
+      recognize by type (its rule is keyed to `torch.nn.MaxPool1d`) so it treated it as
+      linear. Registered via `additional_nonlinear_ops` (reuse-safe via
+      `track_shared_maxpools`, since the encoder shares one pool instance across resolutions;
+      `maxpool1d` *is* in Captum's `SUPPORTED_NON_LINEAR`, so this is standard). Result:
+      **profile delta 2.43→0.135** (residual is inherent GELU-rescale numerical noise).
+      The count-head `LayerNorm` is deliberately **left at the Captum/tangermeme default**
+      (autograd-gradient passthrough — neither library registers LayerNorm; the generic
+      elementwise Rescale rule is the wrong tool for a cross-dim op), so the **counts head
+      keeps a ~0.46 gap** — standard-tool behavior, accepted. GELU/BatchNorm(eval)/avg-pool
+      need nothing (already registered or linear).
 - [ ] **To-do (Tier C) — marginal footprinting**, once corrected/factorized CAPY
       exists: reproduce the Tn5-motif marginal-footprint response `< 0.003` check.
 

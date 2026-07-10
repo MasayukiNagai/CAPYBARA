@@ -127,6 +127,10 @@ over training (train+valid chroms) non-peaks with `min_thresh < Σcounts < max_t
       across engines, so `modisco` is unchanged. Outputs namespaced under
       `attribution/<method>/`. See `attribution_nobias.py`, `run_modisco.sh`,
       `submit_attribution_nobias.sh`.
+      (If `--method deeplift` is ever used here, `attribution/nonlinear_ops.py`
+      registers CAPY's custom `SameMaxPool1d` max-pool for correct completeness; but the
+      **attention bottleneck** itself is not DeepLIFT-safe, so GradientShap remains the
+      nobias default.)
 - [ ] **Tier C (deferred) — marginal footprinting**: reproduce the Tn5-motif
       marginal-footprint response `< 0.003` on the `nobias` CAPY (mirrors
       `evaluation/marginal_footprints/marginal_footprinting.py`).

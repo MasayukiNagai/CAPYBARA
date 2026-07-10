@@ -190,9 +190,20 @@ def deeplift_attributions(
     device: torch.device,
     batch_size: int = 16,
     n_shuffles: int = DEFAULT_N_SHUFFLES,
+    additional_nonlinear_ops: dict | None = None,
+    print_convergence_deltas: bool = False,
     verbose: bool = True,
 ) -> np.ndarray:
     """DeepLIFT/DeepSHAP hypothetical attributions via ``tangermeme.deep_lift_shap``.
+
+    With ``n_shuffles`` dinuc-shuffled references this is the DeepSHAP estimator
+    (DeepLIFT Rescale rule averaged over the reference distribution), the same math
+    as ChromBPNet's ``shap`` ``TFDeepExplainer``.
+
+    ``additional_nonlinear_ops`` registers Rescale-rule handlers for nonlinear
+    modules tangermeme does not recognize by type (e.g. CAPY's ``SameMaxPool1d`` via
+    :data:`nonlinear_ops.BIAS_ADDITIONAL_NONLINEAR_OPS`); unregistered nonlinearities
+    are otherwise silently treated as linear and inflate convergence deltas.
 
     Requires strictly one-hot ``onehot`` (every column sums to 1): tangermeme
     validates this and its internal dinucleotide-shuffle re-validates, so
@@ -207,16 +218,23 @@ def deeplift_attributions(
             "`.venv/bin/pip install tangermeme`."
         ) from exc
 
+    from examples.atac.attribution.nonlinear_ops import track_shared_maxpools
+
     wrapper = WRAPPERS[head](model).to(device).eval()
-    attributions = deep_lift_shap(
-        wrapper,
-        onehot,
-        n_shuffles=n_shuffles,
-        hypothetical=True,
-        device=str(device),
-        batch_size=batch_size,
-        verbose=verbose,
-    )
+    # SameMaxPool1d is a shared instance reused at every encoder resolution; track each
+    # call's input so the custom maxpool handler is robust to module reuse.
+    with track_shared_maxpools(wrapper):
+        attributions = deep_lift_shap(
+            wrapper,
+            onehot,
+            n_shuffles=n_shuffles,
+            hypothetical=True,
+            additional_nonlinear_ops=additional_nonlinear_ops,
+            print_convergence_deltas=print_convergence_deltas,
+            device=str(device),
+            batch_size=batch_size,
+            verbose=verbose,
+        )
     return attributions.detach().cpu().numpy().astype(np.float16)  # (N, 4, L)
 
 
@@ -312,6 +330,7 @@ def generate_scores(
     n_shuffles: int = DEFAULT_N_SHUFFLES,
     seed: int = SUBSAMPLE_RANDOM_STATE,
     batch_size: int = 16,
+    print_convergence_deltas: bool = False,
     verbose: bool = True,
 ) -> dict[str, Path]:
     """Subsample -> extract one-hot -> attribute -> write ChromBPNet ``.h5`` per head."""
@@ -338,8 +357,18 @@ def generate_scores(
     for head in heads:
         print(f"Computing {engine} attributions for '{head}' head over {onehot_np.shape[0]} regions...", flush=True)
         if engine == "deeplift":
+            from examples.atac.attribution.nonlinear_ops import BIAS_ADDITIONAL_NONLINEAR_OPS
+
             hyp = deeplift_attributions(
-                model, head, onehot_t, device=device, batch_size=batch_size, n_shuffles=n_shuffles, verbose=verbose
+                model,
+                head,
+                onehot_t,
+                device=device,
+                batch_size=batch_size,
+                n_shuffles=n_shuffles,
+                additional_nonlinear_ops=BIAS_ADDITIONAL_NONLINEAR_OPS,
+                print_convergence_deltas=print_convergence_deltas,
+                verbose=verbose,
             )
         else:
             hyp = gradientshap_attributions(

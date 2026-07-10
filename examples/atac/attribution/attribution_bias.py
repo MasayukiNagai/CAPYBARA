@@ -53,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=SUBSAMPLE_RANDOM_STATE)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--device", type=str, default="gpu")
+    parser.add_argument("--print_convergence_deltas", action="store_true",
+                        help="Report DeepLIFT summation-to-delta error per batch (deeplift engine only).")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -95,6 +97,7 @@ def main() -> None:
         n_shuffles=args.n_shuffles,
         seed=args.seed,
         batch_size=args.batch_size,
+        print_convergence_deltas=args.print_convergence_deltas,
         verbose=args.verbose,
     )
 
