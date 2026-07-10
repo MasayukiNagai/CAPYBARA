@@ -257,12 +257,20 @@ QC assertion.
 
 - [ ] **Now (Tier A):** bias config + `train_bias_capy.py` + `evaluate_bias_capy.py`
       (prediction metrics on peaks/nonpeaks + peak-Pearson>−0.5 gate).
-- [ ] **To-do (Tier B) — attribution & TF-MoDISco parity**, once Stage-1 trains and
-      runs end-to-end: build CAPY contribution scoring (Captum DeepLIFT/DeepLiftShap
-      on count head `sum(logcount)` and profile head weighted-sum mean-normed logits)
-      writing the **same `.h5` schema** (`raw`/`shap`/`projected_shap`, (N,4,L)), then
-      **reuse the container's `modisco motifs`/`modisco report` unchanged** (model-agnostic
-      — operates on the `.h5`) to confirm the CAPY bias model learned only Tn5 motifs.
+- [x] **Tier B — attribution & TF-MoDISco parity** — BUILT in the shared folder
+      `examples/atac/attribution/` (not this folder). CAPY contribution scoring on
+      the count head (`sum(logcount)`) and profile head (weighted-sum mean-normed
+      logits) writes the **same `.h5` schema** (`raw`/`shap`/`projected_shap`,
+      (N,4,L)); then the container's `modisco motifs -n 50000 -w 500` / `modisco
+      report` run **unchanged** (model-agnostic) to confirm the CAPY bias model
+      learned only Tn5 motifs. **Engine (`--method`, default `gradientshap`):**
+      GradientShap (`captum`) is the default because DeepLIFT showed high
+      convergence deltas (~1–4) on CAPY's pooling U-Net; DeepLIFT/DeepSHAP via
+      `tangermeme.deep_lift_shap` stays available (`--method deeplift`) for the
+      closest-to-ChromBPNet comparison (the bias net's local `residual_conv`
+      bottleneck is DeepLIFT-clean). Outputs namespaced under
+      `attribution/<method>/`. See `examples/atac/attribution/`
+      (`attribution_bias.py`, `run_modisco.sh`, `submit_attribution_bias.sh`).
 - [ ] **To-do (Tier C) — marginal footprinting**, once corrected/factorized CAPY
       exists: reproduce the Tn5-motif marginal-footprint response `< 0.003` check.
 

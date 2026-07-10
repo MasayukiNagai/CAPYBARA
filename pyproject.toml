@@ -35,6 +35,15 @@ procap = [
     "tqdm>=4.67.3",
     "wandb>=0.26.1",
 ]
+# Tier-B interpretation (attribution / contribution scoring). TF-MoDISco itself
+# runs inside the ChromBPNet container, so it is NOT listed here.
+interpret = [
+    "tangermeme>=0.4.0",  # DeepLIFT/DeepSHAP engine (bias model)
+    "captum>=0.7.0",      # GradientShap engine (nobias / attention model)
+    "h5py>=3.11.0",       # write ChromBPNet's interpretation .h5 schema
+    "pyfaidx>=0.9.0.4",
+    "tqdm>=4.67.3",
+]
 
 [tool.ruff]
 line-length = 100

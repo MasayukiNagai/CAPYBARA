@@ -114,11 +114,19 @@ over training (train+valid chroms) non-peaks with `min_thresh < Σcounts < max_t
 - [x] **Tier A (NOW)** — scale → compose → train → evaluate; composed peak metrics
       mirroring `chrombpnet_metrics.json` (counts pearson/spearman/mse +
       median_jsd/median_norm_jsd).
-- [ ] **Tier B (deferred) — attribution & TF-MoDISco parity**: DeepLIFT/DeepLiftShap
-      contribution scoring on the `nobias` CAPY (count head `sum(logcount)`, profile
-      head weighted-sum mean-normed logits) → write the same `.h5` schema
-      (`raw`/`shap`/`projected_shap`, (N,4,L)) → reuse the container's
-      `modisco motifs`/`modisco report` unchanged.
+- [x] **Tier B — attribution & TF-MoDISco parity** — BUILT in the shared folder
+      `examples/atac/attribution/`. Contribution scoring on the `nobias` CAPY
+      (profile head = weighted-sum mean-normed logits; counts head optional) → same
+      `.h5` schema (`raw`/`shap`/`projected_shap`, (N,4,L)) → the container's
+      `modisco motifs -n 50000 -w 500` / `modisco report` unchanged.
+      **Engine (`--method`, default `gradientshap`):** the accessibility net uses a
+      `hybrid_attention` bottleneck where DeepLIFT/DeepSHAP is unreliable through
+      self-attention, so the nobias model uses **`captum` GradientShap** (gradient
+      method, robust to attention); `--method deeplift` exists for experimentation
+      but is not recommended here. Scalar targets + `.h5` schema are identical
+      across engines, so `modisco` is unchanged. Outputs namespaced under
+      `attribution/<method>/`. See `attribution_nobias.py`, `run_modisco.sh`,
+      `submit_attribution_nobias.sh`.
 - [ ] **Tier C (deferred) — marginal footprinting**: reproduce the Tn5-motif
       marginal-footprint response `< 0.003` on the `nobias` CAPY (mirrors
       `evaluation/marginal_footprints/marginal_footprinting.py`).
