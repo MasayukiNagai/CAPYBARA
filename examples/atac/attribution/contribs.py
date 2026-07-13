@@ -180,6 +180,31 @@ def extract_onehot_regions(
 
 
 # --------------------------------------------------------------------------- #
+# Simplex-tangent (Majdandzic) gradient correction
+# --------------------------------------------------------------------------- #
+def center_channels(attr: np.ndarray) -> np.ndarray:
+    """Project ``(N, 4, L)`` gradients onto the simplex tangent space.
+
+    One-hot DNA lives on a simplex, so a raw gradient carries an off-simplex
+    component that is *constant across the 4 nucleotide channels* — a direction the
+    model never saw in training and thus arbitrary noise. Majdandzic, Rajesh & Koo
+    (2023, Genome Biology 24:109) remove it by **subtracting**, at each position, the
+    mean of the gradient across the 4 channels (axis=1 in our ``(N, 4, L)`` layout)::
+
+        corrected[n, :, l] = raw[n, :, l] - raw[n, :, l].mean()
+
+    Subtraction (not division): this is the orthogonal projection onto the zero-sum
+    (tangent) subspace, so ``corrected.sum(axis=1) == 0`` exactly. Division by the
+    channel mean is *not* a projection — it blows up when the mean is near zero (common,
+    since +/- gradients cancel) and flips sign when the mean is negative.
+
+    Do the subtraction in float32 (caller casts to float16 only for storage): the
+    zero-sum property holds to ~1e-6 in float32 but only ~1e-2 after the f16 cast.
+    """
+    return attr - attr.mean(axis=1, keepdims=True)
+
+
+# --------------------------------------------------------------------------- #
 # Attribution engines (both return hypothetical scores, shape (N, 4, L))
 # --------------------------------------------------------------------------- #
 def deeplift_attributions(
@@ -246,6 +271,7 @@ def gradientshap_attributions(
     device: torch.device,
     n_shuffles: int = DEFAULT_N_SHUFFLES,
     seed: int = SUBSAMPLE_RANDOM_STATE,
+    gradient_correction: bool = True,
     verbose: bool = True,
 ) -> np.ndarray:
     """GradientShap hypothetical attributions with per-sequence dinuc baselines.
@@ -254,6 +280,27 @@ def gradientshap_attributions(
     unreliable through self-attention. One sequence at a time so each input gets
     its own dinucleotide-shuffled baseline distribution (mirrors ChromBPNet's /
     ProCapNet's per-sequence reference construction).
+
+    Returns a genuine **hypothetical** ``(N, 4, L)`` score — the expected gradient
+    (per-base sensitivity), not an input-projected contribution. Two deliberate
+    choices make it so:
+
+    * ``multiply_by_inputs=False`` — captum's GradientShap otherwise multiplies the
+      expected gradient by ``(input - baseline)`` as a *final* step
+      (``gradient_shap.py:384-391``). We disable that so the returned array stays a
+      per-base map. ``write_chrombpnet_h5`` then forms ``projected_shap = onehot *
+      hyp``, and modisco recomputes the same ``onehot * hyp`` internally for seqlet
+      calling — so the projection lives in exactly one place.
+    * ``gradient_correction`` (default True) — the Majdandzic simplex-tangent
+      projection (:func:`center_channels`). Because the ``(input - baseline)`` multiply
+      is off, subtracting the channel mean from the *expected* gradient is identical to
+      correcting each sampled gradient before averaging (both operations are linear and
+      commute), so a single post-hoc subtraction is exact. Do NOT do this on the
+      DeepLIFT path — ``hypothetical=True`` there already strips a reference-weighted
+      channel-constant gauge, so this would double-apply it.
+
+    Set ``gradient_correction=False`` to produce an uncorrected A/B baseline (same
+    pipeline, correction the only difference).
     """
     try:
         from captum.attr import GradientShap
@@ -264,7 +311,7 @@ def gradientshap_attributions(
         ) from exc
 
     wrapper = WRAPPERS[head](model).to(device).eval()
-    explainer = GradientShap(wrapper)
+    explainer = GradientShap(wrapper, multiply_by_inputs=False)  # return E[grad], no (input-baseline)*
     onehot_np = onehot.detach().cpu().numpy()
     n, _, length = onehot_np.shape
     out = np.empty((n, 4, length), dtype=np.float16)
@@ -284,7 +331,12 @@ def gradientshap_attributions(
         baselines = dinuc_shuffle(onehot_np[i].T, n_shuffles, rng)  # (S, L, 4)
         baselines = torch.from_numpy(np.transpose(baselines, (0, 2, 1))).to(device)  # (S, 4, L)
         attr = explainer.attribute(x, baselines=baselines, target=0, n_samples=n_shuffles, stdevs=0.0)
-        out[i] = attr[0].detach().cpu().numpy().astype(np.float16)
+        attr = attr.detach().cpu().numpy().astype(np.float32)  # (1, 4, L)
+        if gradient_correction:
+            attr = center_channels(attr)  # simplex-tangent projection, in float32
+            resid = np.abs(attr.sum(axis=1)).max()  # defining property: zero-sum over channels
+            assert resid < 1e-5, f"channel sum not ~0 after correction (max |sum|={resid:.2e})"
+        out[i] = attr[0].astype(np.float16)
     return out
 
 
@@ -330,10 +382,16 @@ def generate_scores(
     n_shuffles: int = DEFAULT_N_SHUFFLES,
     seed: int = SUBSAMPLE_RANDOM_STATE,
     batch_size: int = 16,
+    gradient_correction: bool = True,
     print_convergence_deltas: bool = False,
     verbose: bool = True,
 ) -> dict[str, Path]:
-    """Subsample -> extract one-hot -> attribute -> write ChromBPNet ``.h5`` per head."""
+    """Subsample -> extract one-hot -> attribute -> write ChromBPNet ``.h5`` per head.
+
+    ``gradient_correction`` applies only to the ``gradientshap`` engine (the Majdandzic
+    simplex-tangent projection); it is intentionally ignored by the ``deeplift`` engine,
+    whose ``hypothetical=True`` already strips a channel-constant gauge.
+    """
     if engine not in ("deeplift", "gradientshap"):
         raise ValueError(f"Unknown engine {engine!r}; expected 'deeplift' or 'gradientshap'.")
     for head in heads:
@@ -372,7 +430,14 @@ def generate_scores(
             )
         else:
             hyp = gradientshap_attributions(
-                model, head, onehot_t, device=device, n_shuffles=n_shuffles, seed=seed, verbose=verbose
+                model,
+                head,
+                onehot_t,
+                device=device,
+                n_shuffles=n_shuffles,
+                seed=seed,
+                gradient_correction=gradient_correction,
+                verbose=verbose,
             )
         h5_path = out_dir / f"{cell_type}.fold_{fold}.{head}_scores.h5"
         write_chrombpnet_h5(h5_path, onehot_np, hyp)
