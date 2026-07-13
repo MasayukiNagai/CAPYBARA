@@ -10,6 +10,10 @@ default because DeepLIFT shows high convergence deltas on CAPY's pooling U-Net;
 DeepLIFT remains available for the closest-to-ChromBPNet comparison. Outputs are
 namespaced by method under ``.../attribution/<method>/``.
 
+The Majdandzic simplex-tangent gradient correction is **ON by default** on the
+gradientshap path; ``--no_gradient_correction`` disables it and namespaces the run
+under ``.../attribution/gradientshap_uncorrected/`` so the two never collide.
+
 Example:
     python -m examples.atac.attribution.attribution_bias \\
         --proj_dir results/runs/models/chrombpnet_benchmark \\
@@ -47,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timestamp", type=str, required=True)
     parser.add_argument("--method", choices=["gradientshap", "deeplift"], default="gradientshap",
                         help="Attribution engine. Default gradientshap (DeepLIFT has high convergence deltas on CAPY).")
+    parser.add_argument("--no_gradient_correction", action="store_true",
+                        help="Disable the Majdandzic simplex-tangent gradient correction (gradientshap "
+                             "only; default ON). Use for an uncorrected A/B baseline; output is namespaced "
+                             "under attribution/gradientshap_uncorrected/. No effect on the deeplift engine.")
     parser.add_argument("--heads", nargs="+", choices=["profile", "counts"], default=["profile", "counts"])
     parser.add_argument("--n_subsample", type=int, default=DEFAULT_N_SUBSAMPLE)
     parser.add_argument("--n_shuffles", type=int, default=DEFAULT_N_SHUFFLES)
@@ -80,7 +88,13 @@ def main() -> None:
     print(f"Loading CAPY bias checkpoint: {files.best_checkpoint_path}", flush=True)
     model = load_model(params, files.best_checkpoint_path, device)
 
-    out_dir = files.model_dir / "attribution" / args.method
+    # Correction applies to gradientshap only; namespace an uncorrected run so it
+    # does not clobber the corrected one (cf. the deeplift_uncorrected_* convention).
+    gradient_correction = not args.no_gradient_correction
+    method_dirname = args.method
+    if args.method == "gradientshap" and not gradient_correction:
+        method_dirname += "_uncorrected"
+    out_dir = files.model_dir / "attribution" / method_dirname
     written = generate_scores(
         model,
         bed_path=files.peaks_bed_path,
@@ -97,11 +111,16 @@ def main() -> None:
         n_shuffles=args.n_shuffles,
         seed=args.seed,
         batch_size=args.batch_size,
+        gradient_correction=gradient_correction,
         print_convergence_deltas=args.print_convergence_deltas,
         verbose=args.verbose,
     )
 
-    print(f"\n=== CAPY bias attribution ({args.method}) — wrote ChromBPNet-schema .h5 ===", flush=True)
+    correction_note = ""
+    if args.method == "gradientshap":
+        correction_note = f", gradient_correction={'on' if gradient_correction else 'off'}"
+    print(f"\n=== CAPY bias attribution ({args.method}{correction_note}) — wrote ChromBPNet-schema .h5 ===",
+          flush=True)
     for head, path in written.items():
         print(f"  {head:>8}: {path}", flush=True)
     print(f"  interpreted regions: {out_dir / 'interpreted_regions.bed'}", flush=True)

@@ -14,8 +14,10 @@
 #
 # Tier-B for the CAPY bias model: contribution scores (profile+counts) ->
 # TF-MoDISco. Confirms the bias model learned only Tn5/repeat motifs.
-# Usage: sbatch submit_attribution_bias.sh [timestamp] [method] [cell_type] [fold] [gpu]
+# Usage: sbatch submit_attribution_bias.sh [timestamp] [method] [cell_type] [fold] [gpu] [--no_gradient_correction]
 #   method: gradientshap (default) | deeplift
+#   --no_gradient_correction: disable the Majdandzic simplex correction (gradientshap only;
+#     default ON). Output/modisco namespaced under attribution/gradientshap_uncorrected/.
 set -euo pipefail
 
 if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v job_notify_slurm >/dev/null 2>&1; then
@@ -24,6 +26,18 @@ if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v job_notify_slurm >/dev/null 2>&1; 
 fi
 
 REPO_ROOT="${REPO_ROOT:-/grid/koo/home/ykang/elongation/CAPYBARA}"
+
+# Pull the optional --no_gradient_correction flag out of the args; rest stay positional.
+gc_flag=""
+positional=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no_gradient_correction) gc_flag="--no_gradient_correction"; shift ;;
+    *) positional+=("$1"); shift ;;
+  esac
+done
+set -- "${positional[@]}"
+
 timestamp="${1:-chead}"
 method="${2:-gradientshap}"
 cell_type="${3:-K562}"
@@ -36,9 +50,13 @@ PYTHON="${PYTHON:-${REPO_ROOT}/.venv/bin/python}"
 [[ -n "$gpu" ]] && export CUDA_VISIBLE_DEVICES="$gpu"
 
 DIR="${REPO_ROOT}/examples/atac/attribution"
-attr_dir="${proj_dir}/capy_bias/atac/${cell_type}/fold${fold}/${timestamp}/attribution/${method}"
+# Mirror attribution_bias.py's out_dir namespacing: an uncorrected gradientshap run
+# writes to attribution/gradientshap_uncorrected/ so it never clobbers the corrected one.
+method_subdir="${method}"
+[[ "$method" == "gradientshap" && -n "$gc_flag" ]] && method_subdir="${method}_uncorrected"
+attr_dir="${proj_dir}/capy_bias/atac/${cell_type}/fold${fold}/${timestamp}/attribution/${method_subdir}"
 
-echo "REPO_ROOT=${REPO_ROOT} proj_dir=${proj_dir} cell=${cell_type} fold=${fold} ts=${timestamp} method=${method}"
+echo "REPO_ROOT=${REPO_ROOT} proj_dir=${proj_dir} cell=${cell_type} fold=${fold} ts=${timestamp} method=${method} gc_flag=${gc_flag:-on}"
 
 "$PYTHON" "${DIR}/attribution_bias.py" \
   --proj_dir "$proj_dir" \
@@ -46,7 +64,7 @@ echo "REPO_ROOT=${REPO_ROOT} proj_dir=${proj_dir} cell=${cell_type} fold=${fold}
   --fold "$fold" \
   --timestamp "$timestamp" \
   --method "$method" \
-  --heads profile counts
+  --heads profile counts $gc_flag
 
 for head in profile counts; do
   "${DIR}/run_modisco.sh" \
