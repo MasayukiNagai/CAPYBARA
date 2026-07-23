@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -16,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from capybara import CAPY
-from capybara.data import ProfileDataset, extract_loci
+from capybara.data import ProfileDataset, extract_loci, _iter_loci
 from examples.atac.bias_capy.evaluate_bias import chrombpnet_profile_jsd
 from examples.atac.bias_factorized_capy.factorized_model import BiasFactorizedCAPY
 from examples.atac.bias_factorized_capy.file_config import FactorizedCapyFiles
@@ -41,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regions", choices=REGION_CHOICES, default="peaks",
                         help="ChromBPNet evaluates the composed model on peaks only.")
     parser.add_argument("--reverse_complement", action="store_true")
+    parser.add_argument("--save_predictions", action="store_true",
+                        help="Also write a ChromBPNet-format *_predictions.h5 (coords + profs + logcounts).")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--device", type=str, default="gpu")
@@ -82,6 +85,81 @@ def load_composed_model(files: FactorizedCapyFiles, params: dict[str, Any], devi
     return model
 
 
+def region_coords(
+    *,
+    genome_path: Path,
+    bed_path: Path,
+    chroms: list[str],
+    input_length: int,
+    output_length: int,
+) -> tuple[list[str], list[int]]:
+    """Chrom/summit-center of every locus ``extract_loci`` keeps, in the same order.
+
+    ``extract_loci`` returns tensors only, so the coordinates it accepted have to be
+    re-derived here. This repeats its iteration and its chromosome-bounds skip check
+    verbatim; the caller asserts the length against the tensor it actually got back,
+    so any divergence hard-fails instead of silently shifting the mapping.
+    """
+    from pyfaidx import Fasta
+
+    half_input = int(input_length) // 2
+    half_output = int(output_length) // 2
+
+    fasta = Fasta(str(genome_path), sequence_always_upper=True)
+    try:
+        chrom_lengths = {str(key): len(value) for key, value in fasta.items()}
+    finally:
+        fasta.close()
+
+    out_chroms: list[str] = []
+    centers: list[int] = []
+    for chrom, start, end in _iter_loci(bed_path, chroms=set(chroms), summits=True):
+        mid = start + (end - start) // 2
+        chrom_length = chrom_lengths.get(chrom)
+        if (
+            chrom_length is None
+            or mid - half_input < 0
+            or mid - half_output < 0
+            or mid + half_input + (int(input_length) % 2) > chrom_length
+            or mid + half_output + (int(output_length) % 2) > chrom_length
+        ):
+            continue
+        out_chroms.append(chrom)
+        centers.append(mid)
+    return out_chroms, centers
+
+
+def write_predictions_h5(path: Path, per_set: dict[str, dict[str, Any]]) -> None:
+    """Write predictions in ChromBPNet's exact ``*_predictions.h5`` layout.
+
+    Mirrors ``chrombpnet/training/predict.py::write_predictions_h5py``: a ``coords``
+    group (chrom / summit center / peak flag) and a ``predictions`` group holding
+    softmax profile probabilities and log-counts. Observed signal is deliberately
+    not stored — ChromBPNet does not store it either, and the measured axis is
+    recomputed from the BigWig at these coordinates.
+    """
+    peak_flag = {"peaks": 1, "nonpeaks": 0}
+    order = [name for name in ("peaks", "nonpeaks") if name in per_set]
+
+    chroms = [c for name in order for c in per_set[name]["chroms"]]
+    centers = [int(c) for name in order for c in per_set[name]["centers"]]
+    peaks = [peak_flag[name] for name in order for _ in per_set[name]["centers"]]
+    profs = np.concatenate([per_set[name]["pred_probs"] for name in order], axis=0)
+    logcounts = np.concatenate([per_set[name]["pred_log_counts"] for name in order], axis=0)
+
+    dt = h5py.special_dtype(vlen=str)
+    with h5py.File(path, "w") as handle:
+        coord_group = handle.create_group("coords")
+        pred_group = handle.create_group("predictions")
+        coord_group.create_dataset(
+            "coords_chrom", data=np.array(chroms, dtype=dt), dtype=dt, compression="gzip"
+        )
+        coord_group.create_dataset("coords_center", data=centers, dtype=int, compression="gzip")
+        coord_group.create_dataset("coords_peak", data=peaks, dtype=int, compression="gzip")
+        pred_group.create_dataset("profs", data=profs, dtype=float, compression="gzip")
+        pred_group.create_dataset("logcounts", data=logcounts, dtype=float, compression="gzip")
+
+
 def score_region_set(
     *,
     files: FactorizedCapyFiles,
@@ -94,7 +172,7 @@ def score_region_set(
     device,
     verbose: bool,
     model,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     dataset_params = params["dataset"]
     seqs, signals, _ = extract_loci(
         genome_path=files.genome_path,
@@ -126,13 +204,34 @@ def score_region_set(
     median_jsd, median_norm_jsd = chrombpnet_profile_jsd(
         results["true_profiles"], results["pred_log_profiles"]
     )
+
+    n = int(results["true_profiles"].shape[0])
+    coord_chroms, centers = region_coords(
+        genome_path=files.genome_path,
+        bed_path=bed_path,
+        chroms=chroms,
+        input_length=int(dataset_params["input_length"]),
+        output_length=int(dataset_params["output_length"]),
+    )
+    if len(centers) != n:
+        raise RuntimeError(
+            f"Coordinate re-derivation disagrees with extract_loci for {bed_path}: "
+            f"{len(centers)} coords vs {n} scored regions."
+        )
+
     return {
-        "n": int(results["true_profiles"].shape[0]),
+        "n": n,
         "spearmanr": finite_mean(metrics["count_spearman"]),
         "pearsonr": finite_mean(metrics["count_pearson"]),
         "mse": finite_mean(metrics["count_mse"]),
         "median_jsd": median_jsd,
         "median_norm_jsd": median_norm_jsd,
+        "chroms": coord_chroms,
+        "centers": centers,
+        # ChromBPNet stores softmax(profile_logits); CAPY's run_model emits log-softmax.
+        "pred_probs": np.exp(results["pred_log_profiles"][:, 0, :]).astype(np.float64),
+        # Already in ChromBPNet's log(1 + total counts) space, natural log.
+        "pred_log_counts": results["pred_log_counts"].reshape(-1).astype(np.float64),
     }
 
 
@@ -208,6 +307,11 @@ def main() -> None:
             flush=True,
         )
     print(f"  wrote {out_path}", flush=True)
+
+    if args.save_predictions:
+        pred_path = files.eval_dir / f"{args.cell_type}_chrombpnet_capy_predictions{rc_suffix}_{args.split}.h5"
+        write_predictions_h5(pred_path, per_set)
+        print(f"  wrote {pred_path}", flush=True)
 
     if files.ref_metrics_path.exists():
         ref = json.loads(files.ref_metrics_path.read_text())

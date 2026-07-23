@@ -334,8 +334,14 @@ def gradientshap_attributions(
         attr = attr.detach().cpu().numpy().astype(np.float32)  # (1, 4, L)
         if gradient_correction:
             attr = center_channels(attr)  # simplex-tangent projection, in float32
-            resid = np.abs(attr.sum(axis=1)).max()  # defining property: zero-sum over channels
-            assert resid < 1e-5, f"channel sum not ~0 after correction (max |sum|={resid:.2e})"
+            # Defining property: zero-sum over channels. Tolerance must scale with the
+            # attribution magnitude -- float32 round-off in the subtraction is ~eps*|attr|,
+            # and the counts head runs orders of magnitude hotter than the profile head.
+            resid = np.abs(attr.sum(axis=1)).max()
+            scale = float(np.abs(attr).max())
+            assert resid <= 1e-5 * max(scale, 1.0), (
+                f"channel sum not ~0 after correction (max |sum|={resid:.2e}, max |attr|={scale:.2e})"
+            )
         out[i] = attr[0].astype(np.float16)
     return out
 

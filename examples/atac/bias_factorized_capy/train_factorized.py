@@ -112,7 +112,19 @@ def main() -> None:
         params.setdefault("wandb", {})["enabled"] = False
 
     # Mirror ChromBPNet's per-fold data params exactly (read from the shared tsv).
-    counts_weight = files.counts_loss_weight
+    # counts_weight may be overridden per-run for non-parity CAPY-optimization sweeps
+    # via train.counts_weight_override in the YAML; absent that key, the TSV value is
+    # used (strict parity). max_jitter / neg_ratio stay TSV-forced.
+    cw_override = params.get("train", {}).get("counts_weight_override")
+    if cw_override is not None:
+        counts_weight = float(cw_override)
+        print(
+            f"[non-parity] counts_weight override -> {counts_weight} "
+            f"(TSV {files.counts_loss_weight} ignored)",
+            flush=True,
+        )
+    else:
+        counts_weight = files.counts_loss_weight
     params.setdefault("train", {})["counts_weight"] = counts_weight
     params.setdefault("dataset", {})["max_jitter"] = files.max_jitter
     params["dataset"]["negative_sampling_ratio"] = files.negative_sampling_ratio
