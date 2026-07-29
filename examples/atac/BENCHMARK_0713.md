@@ -144,7 +144,7 @@ to support the per-epoch resampling; valid is map-style.
   no real TFs**; the bias-corrected model should show **real TF motifs** (CTCF, GATA1::TAL1, SP1, NRF1…).
 - **Tier C — marginal footprinting.** *Was the bias actually removed?* Insert TN5 motifs into
   background sequence and measure the corrected model's response; ChromBPNet's is ≤ 0.002.
-  **Not yet built.**
+  **Pipeline built and sanity-checked on K562/fold_0 (not the final eval) — descriptive results in §8b.**
 
 ### Metric definitions — exact ChromBPNet parity (a real bug we fixed)
 CAPY's in-repo `jensen_shannon_distance` returns the JS **divergence**; ChromBPNet uses
@@ -708,6 +708,77 @@ machinery*, diffuse on both sides and additionally convergence-limited on CAPY's
 
 ---
 
+## 8b. Tier C — marginal footprinting (pipeline sanity check, K562/fold_0)
+
+**Status: this is a pipeline / sanity-check run, not the final Tier-C evaluation.** The purpose here
+is to confirm the footprinting pipeline is correct and its numbers are sensible; the section is
+descriptive only and draws no verdict about CAPY vs ChromBPNet or about §8a.
+
+**What the evaluation is.** Marginal footprinting asks *was the Tn5 bias actually removed?* A Tn5
+enzyme motif is inserted at the center of background (non-peak) sequence, the model predicts, and we
+read the shape of the predicted profile response. A bias-corrected (nobias) model should give a
+**flat** footprint (no Tn5 preference left); a model that still carries Tn5 bias produces a footprint.
+Two numbers make the readouts interpretable: (i) **uniform baseline = 1/1000 = 0.001** — a perfectly
+flat length-1000 footprint puts 0.001 at every base, so the gate (max < 0.003) is only ~3× this
+floor; (ii) **profile-shape-only caveat** — each sequence's footprint is normalized to sum 1 before
+averaging, so the `(exp(logcounts)−1)` factor cancels within a sequence. Tier C therefore reflects
+**profile-head shape**, not counts-head debiasing, and should not be cited as evidence about the
+counts head.
+
+**How both did it.** We mirror ChromBPNet's `marginal_footprinting.py`: per-base footprint =
+`softmax(profile_logits) · (exp(logcounts) − 1)`, computed on the inserted sequence **and** its
+reverse complement, summed, normalized per sequence to sum 1, averaged over all background sequences
+→ a length-1000 curve per motif. The per-motif scalar is `round(max(curve), 3)`; the gate is
+`all(round(max,3) < 0.003)` (rounds first, then strict `<`), labeling the run `corrected` or
+`uncorrected`. CAPY's two-headed PyTorch model (`profile_logits (B,1,1000)`, `log_counts (B,1)`)
+maps directly onto ChromBPNet's Keras port; the CAPY script is
+`bias_factorized_capy/marginal_footprint.py`. **Background set:** both sides use the *same input BED*,
+`K562.fold_0_filtered.nonpeaks.bed` (66,474 non-peaks on the test chroms). CAPY's summary JSON records
+that it scored all 66,474 windows (`edge_skipped=0`, 10 windows contain an `N`, frac 1.5e-4).
+ChromBPNet's per-run scored count (N / edge-skips / N-windows) is **not** recorded in the artifacts we
+have, so we note the input BED is identical but do **not** assert scored-window parity on the CBP side.
+
+**Models footprinted.** (1) the bias-corrected `nobias.pt` — the real test, expected flat; (2) the
+frozen scaled bias branch — a CAPY-internal positive control expected to show a strong Tn5 footprint.
+ChromBPNet did not footprint its own bias model, so the bias-branch numbers have no ChromBPNet
+counterpart. Both K562/fold_0 CAPY runs (`chead_test1`, `cw50`) share the same frozen `chead` bias
+branch, so their bias-branch numbers are identical.
+
+**nobias — `max_bias_response` line (both runs):** `corrected_0.001_0.001/0.001/0.001/0.001/0.001`
+(all five TN5 rounded maxima 0.001; passes the gate at both 0.003 and 0.002). ChromBPNet's own line:
+`corrected_0.001_0.002/0.001/0.001/0.001/0.002`.
+
+Per-motif detail, nobias, over the same background BED. CAPY `raw_max`, `ratio_vs_control`,
+`center_minus_control_center` are read directly from each run's `_footprint_summary.json`; the
+ChromBPNet columns are read from `K562.fold_0_chrombpnet_nobias_footprints.h5` (`raw_max`, and
+`ratio` computed against CBP's own control max 0.001017 from that same file):
+
+| motif | CAPY `cw50` max (ratio; Δctr) | CAPY `chead_test1` max (ratio; Δctr) | ChromBPNet max (ratio) | rounded cw50 / chead / CBP |
+|---|---|---|---|---|
+| control | 0.001042 (1.000) | 0.001035 (1.000) | 0.001017 (1.000) | 0.001 / 0.001 / 0.001 |
+| tn5_1 | 0.001312 (1.258; +0.000294) | 0.001220 (1.179; +0.000114) | 0.001552 (1.526) | 0.001 / 0.001 / 0.002 |
+| tn5_2 | 0.001306 (1.253; +0.000119) | 0.001248 (1.206; +0.000094) | 0.001439 (1.415) | 0.001 / 0.001 / 0.001 |
+| tn5_3 | 0.001275 (1.223; +0.000057) | 0.001209 (1.168; +0.000140) | 0.001499 (1.474) | 0.001 / 0.001 / 0.001 |
+| tn5_4 | 0.001402 (1.345; +0.000287) | 0.001271 (1.228; +0.000164) | 0.001421 (1.397) | 0.001 / 0.001 / 0.001 |
+| tn5_5 | 0.001355 (1.300; +0.000263) | 0.001245 (1.203; +0.000146) | 0.001518 (1.493) | 0.001 / 0.001 / 0.002 |
+
+`center_minus_control_center` (nobias footprint value at the exact insertion center minus the control's
+center value) is **positive and small for all five motifs in both runs** (+0.00006 … +0.00029), i.e.
+no central dip below control was observed in this run. This is reported as a raw observation only —
+**§8a stays open**; the footprint shape is not used here to adjudicate over-subtraction.
+
+**bias branch — positive control (identical across both runs, same frozen `chead`):**
+`uncorrected_0.063_0.042/0.062/0.056/0.082/0.071`. TN5 raw maxima 0.042–0.082 (ratio-vs-control
+40–77×, from the `_footprint_summary.json`), a sharp feature at the insertion center (argmax 495–501).
+This confirms the insertion / loader / prediction path is working — a Tn5-carrying model does produce
+a large footprint through this code.
+
+**Still open for the real evaluation (not done here):** bootstrap confidence intervals on the
+per-motif maxima; and confirming whether the δ-scaling adjusts the profile logits or the counts head —
+which must be settled before Tier C is used to speak to §8a.
+
+---
+
 ## 9. What's next — open items
 
 1. **Corrected GradientShap attribution — DONE for both models, both heads.** Both corrected
@@ -738,9 +809,14 @@ machinery*, diffuse on both sides and additionally convergence-limited on CAPY's
    are a CAPY-only artifact, useful for internal diagnosis but outside strict ChromBPNet parity.
 4. **`gradientshap_0710_buggy/modisco/counts/reports/` is incomplete** — trimmed logos written, no
    `motifs.html`; the report step died partway. Moot if the dir is discarded.
-5. **Tier C (marginal footprinting) is unbuilt** for both stages. Inputs are already available:
-   `auxiliary/motif_to_pwm.tsv` (5 TN5 seeds). Target: reproduce ChromBPNet's
-   `max_bias_response ≤ 0.002` on the corrected model.
+5. **Tier C (marginal footprinting) — pipeline built + sanity-checked, real eval pending.** The
+   script (`bias_factorized_capy/marginal_footprint.py`) and wrapper are built and were run on
+   K562/fold_0 (`chead_test1`, `cw50`); descriptive results are in §8b (nobias `corrected`, bias
+   branch `uncorrected` positive control). This was a correctness/sanity check, **not** the final
+   evaluation. Still to do for the real run: bootstrap CIs on the per-motif maxima; confirm whether
+   the δ-scaling adjusts the profile logits or the counts head before Tier C is used to speak to §8a;
+   then extend across folds/cell lines. Target remains ChromBPNet's `max_bias_response ≤ 0.002` on
+   the corrected model.
 6. **Only K562 / fold_0.** Folds 1–4 need the Stage-1 and Stage-2 runs; the other four cell lines need
    the `chrombpnet_setup/` steps re-run first. `RESULTS.md` stays empty until these land.
 7. **Stale scripts:** `run_train_capy.sh` and `submit_train_all_folds_capy.sh` hardcode another user's

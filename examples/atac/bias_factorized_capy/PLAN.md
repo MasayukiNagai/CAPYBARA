@@ -58,5 +58,13 @@ Outputs: `results/runs/models/chrombpnet_benchmark/capy_chrombpnet/atac/{cell}/f
       the top, with a faint residual TN5_6 trace ChromBPNet lacks.** Comparison: BENCHMARK_0713.md §8a.
       **Incomplete: the Majdandzic-corrected run was never produced** — only `gradientshap_0710_buggy/`
       and `gradientshap_uncorrected/` exist, so §8a's verdict is provisional. See §7 and §9 item 1.
-- [ ] **Tier C** — marginal footprinting (target: max bias response ≤ 0.002). Not built.
+- [~] **Tier C** — marginal footprinting. **Pipeline built + sanity-checked on K562/fold_0
+      (`chead_test1`, `cw50`); this is not the final evaluation run.** The nobias `max_bias_response`
+      is `corrected` in both runs (all five TN5 rounded maxima 0.001); the frozen bias branch is
+      `uncorrected` (TN5 maxima 0.042–0.082), confirming the insertion/loader path works. Descriptive
+      numbers and the CAPY-vs-ChromBPNet table: BENCHMARK_0713.md §8b. **§8a stays open** — the
+      footprint shape is not yet used to adjudicate over-subtraction.
+      Still open for the real evaluation (not done here): (a) bootstrap CIs on the per-motif maxima;
+      (b) confirm whether the δ-scaling adjusts the profile logits or the counts head — must be
+      settled before Tier C is used to speak to §8a.
 - [ ] Folds 1–4 and the other four cell lines.

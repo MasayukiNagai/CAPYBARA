@@ -93,6 +93,11 @@ class FactorizedCapyFiles:
         return Path(f"{self._aux_prefix}_data_unstranded.bw")
 
     @property
+    def motif_pwm_path(self) -> Path:
+        """The fold's 5 TN5 motif seeds for Tier-C marginal footprinting."""
+        return self._cbp_fold_dir / "auxiliary" / "motif_to_pwm.tsv"
+
+    @property
     def model_params_tsv_path(self) -> Path:
         return self._cbp_fold_dir / "logs" / f"{self.cell_type}.fold_{self.fold}_chrombpnet_model_params.tsv"
 
@@ -230,6 +235,7 @@ class FactorizedCapyFiles:
             self.peaks_bed_path,
             self.nonpeaks_bed_path,
             self.data_bw_path,
+            self.motif_pwm_path,
             self.model_params_tsv_path,
             self.data_params_tsv_path,
         ]
@@ -261,6 +267,7 @@ class FactorizedCapyFiles:
             "peaks_bed_path": str(self.peaks_bed_path),
             "nonpeaks_bed_path": str(self.nonpeaks_bed_path),
             "data_bw_path": str(self.data_bw_path),
+            "motif_pwm_path": str(self.motif_pwm_path),
             "model_params_tsv_path": str(self.model_params_tsv_path),
             "data_params_tsv_path": str(self.data_params_tsv_path),
             "fold_split_path": str(self.fold_split_path),
